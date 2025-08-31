@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: voice-assistant-pkg
+Version: 0.0.0
+Summary: Voice Assistant Package for ROS2
+Maintainer: your_name
+Maintainer-email: your_email@example.com
+License: Apache License 2.0

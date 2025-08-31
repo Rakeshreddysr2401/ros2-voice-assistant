@@ -1,0 +1,4 @@
+[console_scripts]
+agent_node = voice_assistant_pkg.agent_node:main
+input_node = voice_assistant_pkg.input_node:main
+output_node = voice_assistant_pkg.output_node:main

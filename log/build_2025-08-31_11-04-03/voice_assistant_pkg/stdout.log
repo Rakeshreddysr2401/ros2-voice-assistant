@@ -1,0 +1,49 @@
+running egg_info
+creating ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info
+writing ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/PKG-INFO
+writing dependency_links to ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/dependency_links.txt
+writing entry points to ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/entry_points.txt
+writing requirements to ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/requires.txt
+writing top-level names to ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/top_level.txt
+writing manifest file '../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/SOURCES.txt'
+reading manifest file '../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/SOURCES.txt'
+writing manifest file '../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/rakhi/ros2_ws/build/voice_assistant_pkg/build
+creating /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib
+creating /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+copying voice_assistant_pkg/input_node.py -> /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+copying voice_assistant_pkg/msg_types.py -> /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+copying voice_assistant_pkg/__init__.py -> /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+copying voice_assistant_pkg/agent_node.py -> /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+copying voice_assistant_pkg/output_node.py -> /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg
+running install
+running install_lib
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+copying /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg/input_node.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+copying /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg/msg_types.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+copying /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg/__init__.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+copying /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg/agent_node.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+copying /home/rakhi/ros2_ws/build/voice_assistant_pkg/build/lib/voice_assistant_pkg/output_node.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg
+byte-compiling /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg/input_node.py to input_node.cpython-312.pyc
+byte-compiling /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg/msg_types.py to msg_types.cpython-312.pyc
+byte-compiling /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg/__init__.py to __init__.cpython-312.pyc
+byte-compiling /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg/agent_node.py to agent_node.cpython-312.pyc
+byte-compiling /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg/output_node.py to output_node.cpython-312.pyc
+running install_data
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/ament_index
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/ament_index/resource_index
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/ament_index/resource_index/packages
+copying resource/voice_assistant_pkg -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/ament_index/resource_index/packages
+copying package.xml -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/voice_assistant_pkg
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/voice_assistant_pkg/launch
+copying launch/voice_assistant_launch.py -> /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/voice_assistant_pkg/launch
+creating /home/rakhi/ros2_ws/install/voice_assistant_pkg/share/voice_assistant_pkg/config
+running install_egg_info
+Copying ../../build/voice_assistant_pkg/voice_assistant_pkg.egg-info to /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/python3.12/site-packages/voice_assistant_pkg-0.0.0-py3.12.egg-info
+running install_scripts
+Installing agent_node script to /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/voice_assistant_pkg
+Installing input_node script to /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/voice_assistant_pkg
+Installing output_node script to /home/rakhi/ros2_ws/install/voice_assistant_pkg/lib/voice_assistant_pkg
+writing list of installed files to '/home/rakhi/ros2_ws/build/voice_assistant_pkg/install.log'
