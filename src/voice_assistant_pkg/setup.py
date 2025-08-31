@@ -15,7 +15,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'vosk', 'sounddevice'],
     zip_safe=True,
     maintainer='your_name',
     maintainer_email='your_email@example.com',
