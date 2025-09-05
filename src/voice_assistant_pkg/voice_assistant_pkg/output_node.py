@@ -1,51 +1,48 @@
-#!/usr/bin/env python3
+# output_node.py
+# !/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from voice_assistant_pkg.msg_types import VoiceAssistantMsg
 import pyttsx3
 import os
 import time
 
+
 class OutputNode(Node):
+    """Text -> Speech using pyttsx3 TTS"""
+
     def __init__(self):
         super().__init__('output_node')
         self.subscription = self.create_subscription(
-            String,                     # <-- use String directly
+            String,
             'agent_response',
             self.handle_response,
             10
         )
 
-
-
         self.engine = pyttsx3.init()
-
-        # Adjust properties
-        voices = self.engine.getProperty('voices')
-        # if voices:
-        #     self.engine.setProperty('voice', voices[0].id)  # try voices[1], voices[2]... for variety
-        # self.engine.setProperty('rate', 180)  # ~200 default, lower = clearer
-        # self.engine.setProperty('volume', 1.0)  # max volume
-
         self.get_logger().info("🔊 OutputNode started (TTS enabled).")
 
     def handle_response(self, msg):
-        data = VoiceAssistantMsg.parse_msg(msg)
-        response_text = data['text']
+        # Simple string message - just get the text directly
+        response_text = msg.data.strip()
+        if not response_text:
+            return
+
         print(f"\n🤖 Assistant: {response_text}\n")
 
-        # --- Tell input node to pause ---
+        # Pause mic
         self.get_logger().info("🔇 Pausing mic while speaking...")
-        os.system("pactl suspend-source @DEFAULT_SOURCE@ 1")  # suspend mic
+        os.system("pactl suspend-source @DEFAULT_SOURCE@ 1")
 
         self.engine.say(response_text)
         self.engine.runAndWait()
 
-        # --- Resume mic after speaking ---
-        os.system("pactl suspend-source @DEFAULT_SOURCE@ 0")  # resume mic
+        # Resume mic
+        os.system("pactl suspend-source @DEFAULT_SOURCE@ 0")
         time.sleep(0.2)
         self.get_logger().info("🎤 Mic resumed.")
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -57,3 +54,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

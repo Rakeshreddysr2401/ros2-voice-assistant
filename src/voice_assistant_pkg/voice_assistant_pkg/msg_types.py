@@ -3,7 +3,6 @@ from std_msgs.msg import String
 import json
 import time
 
-
 class VoiceAssistantMsg:
     """Custom message wrapper for voice assistant communication"""
 
