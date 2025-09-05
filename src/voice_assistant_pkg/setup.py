@@ -27,6 +27,9 @@ setup(
             'input_node = voice_assistant_pkg.input_node:main',
             'agent_node = voice_assistant_pkg.agent_node:main',
             'output_node = voice_assistant_pkg.output_node:main',
+            'scene_service = voice_assistant_pkg.scene_service:main',
+            'test_yolo_camera = voice_assistant_pkg.test_yolo_camera:main',
+            'blip_node = voice_assistant_pkg.blip_node:main',
         ],
     },
 )

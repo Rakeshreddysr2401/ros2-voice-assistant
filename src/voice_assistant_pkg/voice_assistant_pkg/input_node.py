@@ -20,8 +20,10 @@ class InputNode(Node):
         self.pub = self.create_publisher(String, 'user_input', 10)
 
         # ---- Config (paths, audio) ----
-        model_path = os.getenv("VOSK_MODEL_PATH",
+        model_path_mini = os.getenv("VOSK_MODEL_PATH",
                                os.path.expanduser("~/vosk_models/vosk-model-small-en-us-0.15"))
+        model_path = os.getenv("VOSK_MODEL_PATH",
+                               os.path.expanduser("~/vosk_models/vosk-model-en-us-0.22"))
         if not os.path.isdir(model_path):
             self.get_logger().error(
                 f"Vosk model not found at {model_path}. "
@@ -29,7 +31,7 @@ class InputNode(Node):
             raise SystemExit(1)
 
         self.sample_rate = 16000  # Vosk likes 8k/16k; 16k is a good default
-        self.blocksize = 8000     # ~0.5s blocks at 16k mono int16 (keeps CPU low)
+        self.blocksize = 8000    # ~0.5s blocks at 16k mono int16 (keeps CPU low)
 
         # ---- Vosk recognizer ----
         self.model = Model(model_path)
