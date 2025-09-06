@@ -1,15 +1,16 @@
-# output_node.py
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-import pyttsx3
+import subprocess
 import os
 import time
 
+PIPER_MODEL = "/home/rakhi/piper_models/en_US-amy-medium.onnx"
+
 
 class OutputNode(Node):
-    """Text -> Speech using pyttsx3 TTS"""
+    """Text -> Speech using Piper TTS (streamed to aplay)"""
 
     def __init__(self):
         super().__init__('output_node')
@@ -19,28 +20,39 @@ class OutputNode(Node):
             self.handle_response,
             10
         )
-
-        self.engine = pyttsx3.init()
-        self.get_logger().info("🔊 OutputNode started (TTS enabled).")
+        self.get_logger().info("🔊 OutputNode started (Piper TTS).")
 
     def handle_response(self, msg):
-        # Simple string message - just get the text directly
         response_text = msg.data.strip()
         if not response_text:
             return
 
         print(f"\n🤖 Assistant: {response_text}\n")
 
-        # Pause mic
-        self.get_logger().info("🔇 Pausing mic while speaking...")
+        # Pause mic while speaking
         os.system("pactl suspend-source @DEFAULT_SOURCE@ 1")
 
-        self.engine.say(response_text)
-        self.engine.runAndWait()
+        # Run Piper and stream raw audio directly to aplay
+        piper = subprocess.Popen(
+            ["piper", "--model", PIPER_MODEL, "--output-raw"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE
+        )
+        aplay = subprocess.Popen(
+            ["aplay", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"],
+            stdin=piper.stdout
+        )
+        # Send text to Piper
+        piper.stdin.write(response_text.encode("utf-8"))
+        piper.stdin.close()
+
+        # Wait until playback finishes
+        aplay.wait()
 
         # Resume mic
         os.system("pactl suspend-source @DEFAULT_SOURCE@ 0")
         time.sleep(0.2)
+
         self.get_logger().info("🎤 Mic resumed.")
 
 
@@ -56,5 +68,5 @@ def main(args=None):
         rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
