@@ -3,8 +3,6 @@ import os
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
-
 from typing import TypedDict, List, Annotated
 
 # LangGraph / LangChain imports
@@ -28,10 +26,6 @@ class AgentNode(Node):
         # ROS communication
         self.input_sub = self.create_subscription(String, 'user_input', self.process_input, 10)
         self.response_pub = self.create_publisher(String, 'agent_response', 10)
-
-        # Service clients (vision example)
-        self.blip_client = self.create_client(Trigger, 'blip_describe')
-        self.yolo_client = self.create_client(Trigger, 'yolo_detect')
 
         # LLM setup
         api_key = os.getenv("OPENAI_API_KEY")
