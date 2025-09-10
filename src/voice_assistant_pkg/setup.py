@@ -29,7 +29,8 @@ setup(
             'output_node = voice_assistant_pkg.output_node:main',
             'scene_service = voice_assistant_pkg.scene_service:main',
             'test_yolo_camera = voice_assistant_pkg.test_yolo_camera:main',
-            'blip_node = voice_assistant_pkg.blip_node:main',
+            'blip_server = voice_assistant_pkg.blip_server:main',
+'blip_client = voice_assistant_pkg.blip_client:main',
         ],
     },
 )

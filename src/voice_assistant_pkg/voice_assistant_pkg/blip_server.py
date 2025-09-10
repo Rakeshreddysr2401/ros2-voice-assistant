@@ -6,14 +6,15 @@ import time
 from PIL import Image
 import rclpy
 from rclpy.node import Node
-from std_srvs.srv import Trigger
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from custom_interfaces.msg import VisualQuery
 
-class BlipNode(Node):
+
+class BlipServer(Node):
     def __init__(self):
-        super().__init__("blip_node")
+        super().__init__("blip_server")
 
-        # Camera source
+        # Camera setup
         camera_source = os.getenv("CAMERA_SOURCE", "0")
         if camera_source.isdigit():
             camera_source = int(camera_source)
@@ -36,9 +37,10 @@ class BlipNode(Node):
         self.thread = threading.Thread(target=self.camera_loop, daemon=True)
         self.thread.start()
 
-        # ROS2 Service for description
-        self.create_service(Trigger, "blip_describe", self.handle_describe)
-        self.get_logger().info("📷 BLIP Node ready (service: blip_describe)")
+        # Create subscriber for queries and publisher for responses
+        self.query_sub = self.create_subscription(VisualQuery, "visual_query_request", self.handle_query, 10)
+        self.response_pub = self.create_publisher(VisualQuery, "visual_query_response", 10)
+        self.get_logger().info("🤖 BLIP Server ready (topics: visual_query_request/response)")
 
     def camera_loop(self):
         while self.running and self.cap.isOpened():
@@ -48,27 +50,37 @@ class BlipNode(Node):
                     self.latest_frame = frame.copy()
             time.sleep(0.05)
 
-    def handle_describe(self, request, response):
+    def handle_query(self, request):
         frame = None
         with self.lock:
             if self.latest_frame is not None:
                 frame = self.latest_frame.copy()
 
+        response_msg = VisualQuery()
+        response_msg.query = request.query
+
         if frame is None:
-            response.success = False
-            response.message = "⚠️ No frame available"
-            return response
+            response_msg.response = "⚠️ No camera frame available"
+            self.response_pub.publish(response_msg)
+            return
 
         # Convert to PIL
         image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        inputs = self.processor(images=image, return_tensors="pt").to(self.model.device)
-        out = self.model.generate(**inputs, max_length=50)
-        description = self.processor.decode(out[0], skip_special_tokens=True)
 
-        response.success = True
-        response.message = description
-        self.get_logger().info(f"Scene description: {description}")
-        return response
+        # Process based on query
+        if not request.query.strip():  # Empty query - image description
+            inputs = self.processor(images=image, return_tensors="pt")
+            out = self.model.generate(**inputs, max_length=50)
+            result = self.processor.decode(out[0], skip_special_tokens=True)
+            self.get_logger().info(f"Generated description: {result}")
+        else:  # Non-empty query - conditional generation
+            inputs = self.processor(images=image, text=request.query, return_tensors="pt")
+            out = self.model.generate(**inputs, max_length=50)
+            result = self.processor.decode(out[0], skip_special_tokens=True)
+            self.get_logger().info(f"Query: '{request.query}' -> Response: {result}")
+
+        response_msg.response = result
+        self.response_pub.publish(response_msg)
 
     def destroy_node(self):
         self.running = False
@@ -76,9 +88,10 @@ class BlipNode(Node):
             self.cap.release()
         super().destroy_node()
 
+
 def main(args=None):
     rclpy.init(args=args)
-    node = BlipNode()
+    node = BlipServer()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -86,6 +99,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
