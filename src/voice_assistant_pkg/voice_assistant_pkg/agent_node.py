@@ -5,6 +5,11 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from typing import TypedDict, List, Annotated
 
+
+print("LangSmith key:", os.getenv("LANGSMITH_API_KEY"))
+print("LangSmith project:", os.getenv("LANGSMITH_PROJECT"))
+
+
 # LangGraph / LangChain imports
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -38,7 +43,7 @@ class AgentNode(Node):
         # Tools and graph
         if self.llm:
             self.tools = get_tools()
-            self.tool_node = ToolNode(self.tools)
+            self.tool_node = ToolNode(self.tools,allow_multiple_calls=True)
             self.memory_checkpointer = MemorySaver()
             self.graph = self.create_agent_graph()
         else:
@@ -76,6 +81,10 @@ class AgentNode(Node):
         try:
             llm_with_tools = self.llm.bind_tools(self.tools)
             response = llm_with_tools.invoke(conversation_messages)
+
+            # Log if LLM requests a tool
+            if hasattr(response, "tool_name") and response.tool_name:
+                self.get_logger().info(f"LLM requested tool: {response.tool_name}")
 
             return {"messages": [response] if isinstance(response, AIMessage) else [AIMessage(content=str(response))]}
 

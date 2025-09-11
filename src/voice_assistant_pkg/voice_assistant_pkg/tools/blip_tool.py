@@ -16,7 +16,7 @@ else:
 
 @tool
 def describe_scene() -> str:
-    """Capture a scene from the camera and return a short description."""
+    """These is the eyes of the robot, use this to describe what it sees in front of it."""
     req = Trigger.Request()
     future = client.call_async(req)
     rclpy.spin_until_future_complete(node, future)

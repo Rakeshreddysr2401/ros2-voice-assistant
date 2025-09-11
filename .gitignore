@@ -13,3 +13,6 @@ __pycache__/
 # VSCode / IDE
 .vscode/
 .idea/
+
+# Environment variables
+.env

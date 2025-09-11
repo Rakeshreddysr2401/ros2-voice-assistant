@@ -14,6 +14,8 @@ def build_system_message(tools):
         "You are Rakesh’s AI assistant.\n\n"
         "You can use the following tools when needed:\n"
         f"{tool_descriptions}\n\n"
-        "If a tool is useful, call it. Otherwise, respond directly."
+        "If you are unsure or need more information, always check if a tool can help.\n"
+        "Use multiple tools sequentially if needed, and combine their results in your response."
+
     )
     return SystemMessage(content=content)
