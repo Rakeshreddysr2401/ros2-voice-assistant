@@ -30,6 +30,7 @@ setup(
             'scene_service = voice_assistant_pkg.scene_service:main',
             'test_yolo_camera = voice_assistant_pkg.test_yolo_camera:main',
             'blip_server = voice_assistant_pkg.blip_server:main',
+'yolo_server = voice_assistant_pkg.yolo_server:main',
 'llava_server = voice_assistant_pkg.llava_server:main',
 
         ],

@@ -1,3 +1,4 @@
+#tools __init__.py
 from .qdrant_tool import qdrant_search_tool
 from .tavily_tool import tavily_tool
 from .blip_tool import describe_scene

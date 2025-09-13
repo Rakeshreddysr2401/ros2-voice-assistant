@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#blip_server.py
 import os
 import cv2
 import threading
