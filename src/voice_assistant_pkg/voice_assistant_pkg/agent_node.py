@@ -5,10 +5,8 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from typing import TypedDict, List, Annotated
 
-
 print("LangSmith key:", os.getenv("LANGSMITH_API_KEY"))
 print("LangSmith project:", os.getenv("LANGSMITH_PROJECT"))
-
 
 # LangGraph / LangChain imports
 from langgraph.graph import StateGraph, END
@@ -19,9 +17,11 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from .tools import get_tools, build_system_message  # dynamic tool loader
 
+
 # ------------------ State Definition ------------------
 class AgentState(TypedDict):
     messages: Annotated[List, add_messages]
+
 
 # ------------------ Agent Node ------------------
 class AgentNode(Node):
@@ -43,7 +43,7 @@ class AgentNode(Node):
         # Tools and graph
         if self.llm:
             self.tools = get_tools()
-            self.tool_node = ToolNode(self.tools,allow_multiple_calls=True)
+            self.tool_node = ToolNode(self.tools)
             self.memory_checkpointer = MemorySaver()
             self.graph = self.create_agent_graph()
         else:
@@ -74,9 +74,15 @@ class AgentNode(Node):
 
         messages = state["messages"]
 
-        # Dynamic system message from tools
-        system_msg = build_system_message(self.tools)
-        conversation_messages = [system_msg] + messages
+        # Check if system message already exists to avoid duplicates
+        has_system_message = any(isinstance(msg, SystemMessage) for msg in messages)
+
+        if not has_system_message:
+            # Add system message only if it doesn't exist
+            system_msg = build_system_message(self.tools)
+            conversation_messages = [system_msg] + messages
+        else:
+            conversation_messages = messages
 
         try:
             llm_with_tools = self.llm.bind_tools(self.tools)
@@ -86,7 +92,8 @@ class AgentNode(Node):
             if hasattr(response, "tool_name") and response.tool_name:
                 self.get_logger().info(f"LLM requested tool: {response.tool_name}")
 
-            return {"messages": [response] if isinstance(response, AIMessage) else [AIMessage(content=str(response))]}
+            # Return all messages (not just AIMessage)
+            return {"messages": [response]}
 
         except Exception as e:
             self.get_logger().error(f"Error in agent call: {str(e)}")
