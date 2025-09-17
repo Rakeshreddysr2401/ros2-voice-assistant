@@ -1,27 +1,19 @@
 # agent_node.py
-import os
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from typing import TypedDict, List, Annotated
 
-print("LangSmith key:", os.getenv("LANGSMITH_API_KEY"))
-print("LangSmith project:", os.getenv("LANGSMITH_PROJECT"))
-
-# LangGraph / LangChain imports
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
-from .tools import get_tools, build_system_message
+from .tools import get_tools
+from .states.states import AgentState;
+from .agents.reviewerAgentNode import reviewerAgent
+from .agents.chatAgentNode import call_agent
 
-
-# ------------------ State Definition ------------------
-class AgentState(TypedDict):
-    messages: Annotated[List, add_messages]
-
+MAX_RETRIES = 2
 
 # ------------------ Agent Node ------------------
 class AgentNode(Node):
@@ -32,88 +24,66 @@ class AgentNode(Node):
         self.input_sub = self.create_subscription(String, 'user_input', self.process_input, 10)
         self.response_pub = self.create_publisher(String, 'agent_response', 10)
 
-        # LLM setup with better configuration
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            self.get_logger().error("OPENAI_API_KEY not found in environment variables")
-            self.llm = None
-        else:
-            self.llm = ChatOpenAI(
-                api_key=api_key,
-                model="gpt-3.5-turbo",
-                temperature=0.7,
-                max_tokens=1000,  # Limit response length for faster processing
-                timeout=30  # Add timeout for API calls
-            )
-
         # Tools and graph setup
         if self.llm:
             self.tools = get_tools()
             self.tool_node = ToolNode(self.tools)
-            self.memory_checkpointer = MemorySaver()
             self.graph = self.create_agent_graph()
 
-            # Pre-build system message to avoid rebuilding it every time
-            self.system_message = build_system_message(self.tools)
         else:
             self.tools = []
             self.tool_node = None
             self.graph = None
-            self.system_message = None
-
         self.get_logger().info(f"🤖 AgentNode ready with {len(self.tools)} tools")
 
     def create_agent_graph(self):
+
+        def chat_agent_transition(state:AgentState):
+            """Determine next step after chatAgent."""
+            messages = state.get("messages", [])
+
+            if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
+                return "tools"
+            return "reviewerAgent"
+
+        def reviewer_transition(state):
+            """Determine next step after reviewerAgent."""
+            feedback = state.get("review_feedback", {})
+            retry_count = state.get("retry_count", 0)
+            satisfied = feedback.get("satisfied", True)
+
+            if satisfied or retry_count > MAX_RETRIES:
+                return END
+            elif not satisfied and retry_count <= MAX_RETRIES:
+                return "agent"
+            return END
+
         """Create the LangGraph workflow"""
         workflow = StateGraph(AgentState)
-        workflow.add_node("agent", self.call_agent)
+        workflow.add_node("agent", call_agent)
         workflow.add_node("tools", self.tool_node)
+        workflow.add_node("reviewerAgent",reviewerAgent)
         workflow.set_entry_point("agent")
-
         workflow.add_conditional_edges(
             "agent",
-            tools_condition,
-            {"tools": "tools", END: END}
+            chat_agent_transition,
+            {
+                "tools": "tools",
+                "reviewerAgent": "reviewerAgent"
+            }
+        )
+        workflow.add_edge("tools", "agent")
+        workflow.add_conditional_edges(
+            "agent",
+            reviewer_transition,
+            {
+                "agent": "agent",
+                END: END
+            }
         )
 
-        workflow.add_edge("tools", "agent")
-        return workflow.compile(checkpointer=self.memory_checkpointer)
+        return workflow.compile(checkpointer=MemorySaver())
 
-    def call_agent(self, state: AgentState):
-        """Main agent logic with improved error handling"""
-        if not self.llm:
-            return {"messages": [AIMessage(content="Language model is not available. Please check OpenAI API key.")]}
-
-        try:
-            messages = state["messages"]
-
-            # Ensure we have a system message at the beginning
-            if not messages or not isinstance(messages[0], SystemMessage):
-                # Insert system message at the beginning
-                conversation_messages = [self.system_message] + messages
-            else:
-                conversation_messages = messages
-
-            # Bind tools to LLM
-            llm_with_tools = self.llm.bind_tools(self.tools)
-
-            # Get response from LLM
-            response = llm_with_tools.invoke(conversation_messages)
-
-            # Log tool usage for debugging
-            if hasattr(response, 'tool_calls') and response.tool_calls:
-                tool_names = [tool_call.get('name', 'unknown') for tool_call in response.tool_calls]
-                self.get_logger().info(f"LLM requested tools: {tool_names}")
-
-            return {"messages": [response]}
-
-        except Exception as e:
-            self.get_logger().error(f"Error in agent call: {str(e)}")
-            error_response = AIMessage(
-                content=f"I encountered an error while processing your request: {str(e)}. "
-                        "Please try rephrasing your question or check if all services are running."
-            )
-            return {"messages": [error_response]}
 
     def process_input(self, msg: String):
         """Process incoming user input with improved error handling and logging"""
@@ -172,7 +142,6 @@ class AgentNode(Node):
             error_msg.data = f"I encountered an error: {str(e)}. Please try again or check if all services are running."
             self.response_pub.publish(error_msg)
 
-
 def main(args=None):
     rclpy.init(args=args)
     node = AgentNode()
@@ -183,7 +152,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == "__main__":
     main()
