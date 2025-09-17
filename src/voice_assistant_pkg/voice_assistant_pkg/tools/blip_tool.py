@@ -1,3 +1,4 @@
+#tools.blip_tool.py
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
@@ -19,7 +20,9 @@ def _ensure_node():
 @tool
 def describe_scene() -> str:
     """
-    Capture the current camera frame and return a description using the BLIP model.
+    Get a detailed description of what the camera currently sees using AI image captioning.
+    Use this when the user asks about the visual scene, what's in view, or needs image description.
+    Returns a natural language description of the current camera frame.
     """
     node = _ensure_node()
     client = node.create_client(Trigger, 'blip_describe')

@@ -1,3 +1,4 @@
+#tools.yolo_tool.py
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
@@ -19,7 +20,9 @@ def _ensure_node():
 @tool
 def describe_objects() -> str:
     """
-    Capture the current camera frame and return a coordinates using the YOLO model.
+    Detect and locate specific objects in the current camera view using YOLO object detection.
+    Use this when the user asks about specific objects, their locations, positions, or coordinates.
+    Returns detailed information about detected objects including their positions and confidence scores.
     """
     node = _ensure_node()
     client = node.create_client(Trigger, 'yolo_detect')
