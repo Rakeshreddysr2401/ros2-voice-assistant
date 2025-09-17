@@ -12,19 +12,19 @@ def _ensure_node():
     if not _rcl_inited:
         if not rclpy.ok():
             rclpy.init()
-        _node = Node('blip_tool_client')
+        _node = Node('yolo_tool_client')
         _rcl_inited = True
     return _node
 
 @tool
-def describe_scene() -> str:
+def describe_objects() -> str:
     """
-    Capture the current camera frame and return a description using the BLIP model.
+    Capture the current camera frame and return a coordinates using the YOLO model.
     """
     node = _ensure_node()
-    client = node.create_client(Trigger, 'blip_describe')
+    client = node.create_client(Trigger, 'yolo_detect')
     if not client.wait_for_service(timeout_sec=15.0):
-        return "BLIP service not available."
+        return "YOLO service not available."
 
     req = Trigger.Request()
     future = client.call_async(req)
@@ -32,6 +32,6 @@ def describe_scene() -> str:
 
     if future.done() and future.result() is not None:
         res = future.result()
-        return res.message if res.success else f"Failed to get description: {res.message}"
+        return res.message if res.success else f"Failed to get object coordinates: {res.message}"
     else:
-        return "Timed out waiting for BLIP description service."
+        return "Timed out waiting for YOLO service."

@@ -2,11 +2,12 @@
 from .qdrant_tool import qdrant_search_tool
 from .tavily_tool import tavily_tool
 from .blip_tool import describe_scene
+from .yolo_tool import describe_objects
 from langchain_core.messages import SystemMessage
 
 def get_tools():
     """Return all available tools."""
-    return [qdrant_search_tool, tavily_tool,describe_scene]
+    return [qdrant_search_tool, tavily_tool,describe_scene,describe_objects]
 
 def build_system_message(tools):
     """Build a system prompt describing available tools."""
