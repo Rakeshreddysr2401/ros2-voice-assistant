@@ -3,11 +3,12 @@ from .qdrant_tool import qdrant_search_tool
 from .tavily_tool import tavily_tool
 from .blip_tool import describe_scene
 from .yolo_tool import describe_objects
+from .ollama import ollama_query
 from langchain_core.messages import SystemMessage
 
 def get_tools():
     """Return all available tools."""
-    return [describe_scene, describe_objects, qdrant_search_tool, tavily_tool]
+    return [describe_scene, describe_objects, qdrant_search_tool, tavily_tool,ollama_query]
 
 
 def build_system_message(tools):
