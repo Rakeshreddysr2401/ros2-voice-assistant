@@ -9,18 +9,18 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from .tools import get_tools
-from .states.states import AgentState;
-from .agents.reviewerAgentNode import reviewerAgent
+from .states.states import AgentState
 from .agents.chatAgentNode import call_agent
 from .llm_config import llm
 
 MAX_RETRIES = 2
 
+
 # ------------------ Agent Node ------------------
 class AgentNode(Node):
     def __init__(self):
         super().__init__('agent_node')
-        self.llm = llm  # <-- ADD THIS LINE
+        self.llm = llm
         # ROS communication
         self.input_sub = self.create_subscription(String, 'user_input', self.process_input, 10)
         self.response_pub = self.create_publisher(String, 'agent_response', 10)
@@ -30,7 +30,6 @@ class AgentNode(Node):
             self.tools = get_tools()
             self.tool_node = ToolNode(self.tools)
             self.graph = self.create_agent_graph()
-
         else:
             self.tools = []
             self.tool_node = None
@@ -39,13 +38,13 @@ class AgentNode(Node):
 
     def create_agent_graph(self):
 
-        def chat_agent_transition(state:AgentState):
+        def chat_agent_transition(state: AgentState):
             """Determine next step after chatAgent."""
             messages = state.get("messages", [])
 
             if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
                 return "tools"
-            return "reviewerAgent"
+            return END
 
         def reviewer_transition(state):
             """Determine next step after reviewerAgent."""
@@ -63,28 +62,19 @@ class AgentNode(Node):
         workflow = StateGraph(AgentState)
         workflow.add_node("agent", call_agent)
         workflow.add_node("tools", self.tool_node)
-        workflow.add_node("reviewerAgent",reviewerAgent)
         workflow.set_entry_point("agent")
+
         workflow.add_conditional_edges(
             "agent",
             chat_agent_transition,
             {
                 "tools": "tools",
-                "reviewerAgent": "reviewerAgent"
-            }
-        )
-        workflow.add_edge("tools", "agent")
-        workflow.add_conditional_edges(
-            "agent",
-            reviewer_transition,
-            {
-                "agent": "agent",
                 END: END
             }
         )
+        workflow.add_edge("tools", "agent")
 
         return workflow.compile(checkpointer=MemorySaver())
-
 
     def process_input(self, msg: String):
         """Process incoming user input with improved error handling and logging"""
@@ -128,20 +118,16 @@ class AgentNode(Node):
                 response_msg.data = response_text
                 self.response_pub.publish(response_msg)
 
-                # Log response (truncated for readability)
-                log_text = response_text[:150] + "..." if len(response_text) > 150 else response_text
-                self.get_logger().info(f"Response generated: {log_text}")
-            else:
-                self.get_logger().warning("No response generated from agent")
-                error_msg = String()
-                error_msg.data = "I'm having trouble generating a response. Please try again."
-                self.response_pub.publish(error_msg)
+            # Log response (truncated for readability)
+            log_text = response_text[:150] + "..." if len(response_text) > 150 else response_text
+            self.get_logger().info(f"Response generated: {log_text}")
 
         except Exception as e:
             self.get_logger().error(f"Error processing input: {str(e)}")
             error_msg = String()
             error_msg.data = f"I encountered an error: {str(e)}. Please try again or check if all services are running."
             self.response_pub.publish(error_msg)
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -153,6 +139,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()

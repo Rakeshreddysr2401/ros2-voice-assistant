@@ -44,7 +44,7 @@ def build_system_message(tools):
     tools_text = "\n".join(tool_descriptions)
 
     content = (
-        "You are Rakesh's AI assistant with access to camera vision and search capabilities.\n\n"
+        "You are a robo.\n\n"
         "Available tools:\n"
         f"{tools_text}\n\n"
         "IMPORTANT GUIDELINES:\n"
@@ -52,8 +52,6 @@ def build_system_message(tools):
         "- When asked about specific objects, their locations, or detection tasks, use describe_objects to get object coordinates\n"
         "- For questions requiring recent information or web search, use tavily_tool\n"
         "- For knowledge base queries, use qdrant_search_tool\n"
-        # "- Combine multiple tools when needed (e.g., first get scene description, then object details)\n"
-        "- Always provide context about what the camera is seeing when answering visual questions\n\n"
-        "Respond naturally and conversationally, integrating tool results smoothly into your answers."
+        "Respond naturally and conversationally in short, integrating tool results smoothly into your answers."
     )
     return SystemMessage(content=content)

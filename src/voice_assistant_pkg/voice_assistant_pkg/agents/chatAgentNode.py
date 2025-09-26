@@ -1,7 +1,6 @@
 # chains/chatAgentNode.py
 from langchain_core.messages import SystemMessage,AIMessage
 from ..states.states import AgentState
-from .ChatAgentChain import get_retry_prompt
 from ..llm_config import llm_with_tools
 from ..tools import build_system_message, get_tools
 
@@ -10,13 +9,11 @@ def call_agent(state: AgentState):
 
     try:
         messages = state["messages"]
-        review = state.get("review_feedback")
-        retry_count = state.get("retry_count", 0)
 
         tools= get_tools()
         system_message = build_system_message(tools)
 
-        print(f"Chat Agent called : {retry_count + 1} st time")
+        print(f"Chat Agent called")
         # Ensure we have a system message at the beginning
         if not messages or not isinstance(messages[0], SystemMessage):
             # Insert system message at the beginning
@@ -24,15 +21,6 @@ def call_agent(state: AgentState):
         else:
             conversation_messages = messages
 
-        # Add retry prompt if we have negative feedback
-        if review and review.get("satisfied") is False:
-            conversation_messages.append(
-                get_retry_prompt(
-                    retry_count,
-                    review.get("critique", ""),
-                    review.get("suggestions", [])
-                )
-            )
         # Get response from LLM
         response = llm_with_tools.invoke(conversation_messages)
 
@@ -42,9 +30,7 @@ def call_agent(state: AgentState):
             print(f"LLM requested tools: {tool_names}")
 
         return {
-            "messages": messages + [response],
-            "retry_count": retry_count,
-            "chatAgentResponse": response,
+            "messages": messages + [response]
         }
 
     except Exception as e:
