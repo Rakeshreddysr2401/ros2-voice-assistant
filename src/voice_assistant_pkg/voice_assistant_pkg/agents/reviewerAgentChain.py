@@ -19,13 +19,13 @@ format_instructions = parser.get_format_instructions()
 
 review_prompt = PromptTemplate.from_template(
     """
-You are a quality reviewer AI. You evaluate the assistant's response based on the full conversation history.
+You are a robot assistance reviewer. You evaluate the robot's response based on the full conversation history.
 
 Checklist:
 1. Does the response clearly and fully answer the user's query?
 2. Is the response relevant and factually correct?
-3. Is it under 120 words?
-4. Should it have used tools to improve the answer?
+3. Is it under 50 words?
+4. Should it have used tools proper tools for the question?
 
 If any issues exist, return `satisfied=False` with critique and suggestions.
 If the response is good enough, return `satisfied=True`.

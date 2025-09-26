@@ -1,11 +1,18 @@
-#tools.tavily_tool.py
+# #tools.tavily_tool.py
 from langchain_core.tools import tool
-from langchain_community.tools.tavily_search import TavilySearchResults
 
-# Reuse the Tavily instance
-tavily = TavilySearchResults(max_results=2)
+
+from dotenv import load_dotenv
+from langchain_tavily import TavilySearch
+
+load_dotenv()
+
+tavily = TavilySearch(max_results=2)
 
 @tool
 def tavily_tool(query: str):
-    """Search tasks, projects, or knowledge from the Tavily platform used as general web search."""
+    """used it for general web search. like for unknown or realtime queries like current news, weather etc."""
     return tavily.invoke({"query": query})
+
+
+

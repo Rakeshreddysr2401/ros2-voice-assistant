@@ -15,21 +15,23 @@ def reviewerAgent(state: AgentState):
     print(f"Reviewer Agent called : {retry_count+1} time")
 
     # If we've exceeded max retries, accept the current response and END
-    if retry_count >= MAX_RETRIES:
-        print(f"Max retries exceeded. Accepting final response: {last_ai}")
-        writer = get_stream_writer()
-        writer({"data": last_ai, "type": "final_response"})
-        return {
-            "final_response": last_ai,
-            "review_feedback": {"satisfied": True, "reason": "max_retries_exceeded"}
-        }
+    # if retry_count >= MAX_RETRIES:
+    #     print(f"Max retries exceeded. Accepting final response: {last_ai}")
+    #     writer = get_stream_writer()
+    #     writer({"data": last_ai, "type": "final_response"})
+    #     return {
+    #         "final_response": last_ai,
+    #         "review_feedback": {"satisfied": True, "reason": "max_retries_exceeded"}
+    #     }
 
     # Build chat history string
-    history_str = "\n".join(
-        f"{msg.type.upper()}: {msg.content}"
-        for msg in messages
-        if hasattr(msg, 'content') and msg.content
-    )
+    # history_str = "\n".join(
+    #     f"{msg.type.upper()}: {msg.content}"
+    #     for msg in messages
+    #     if hasattr(msg, 'content') and msg.content
+    # )
+
+    history_str = ""
 
     try:
         feedback: ReviewFeedback = review_chain.invoke({

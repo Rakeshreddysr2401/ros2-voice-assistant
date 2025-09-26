@@ -19,7 +19,7 @@ The previous response had issues:
 Suggestions for improvement:
 {suggestion_text}
 
-Please revise your response carefully. Keep it concise (<120 words), relevant, and directly address the user's question.
+Please revise your response carefully. Keep it concise (<50 words), relevant, and directly address the user's question or make a tool call if required.
 """.strip())
 
 

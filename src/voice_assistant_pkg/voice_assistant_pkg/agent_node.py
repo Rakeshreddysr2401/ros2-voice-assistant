@@ -12,6 +12,7 @@ from .tools import get_tools
 from .states.states import AgentState;
 from .agents.reviewerAgentNode import reviewerAgent
 from .agents.chatAgentNode import call_agent
+from .llm_config import llm
 
 MAX_RETRIES = 2
 
@@ -19,7 +20,7 @@ MAX_RETRIES = 2
 class AgentNode(Node):
     def __init__(self):
         super().__init__('agent_node')
-
+        self.llm = llm  # <-- ADD THIS LINE
         # ROS communication
         self.input_sub = self.create_subscription(String, 'user_input', self.process_input, 10)
         self.response_pub = self.create_publisher(String, 'agent_response', 10)
