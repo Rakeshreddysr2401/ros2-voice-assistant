@@ -1,0 +1,2 @@
+string query
+bool is_camera_working
