@@ -1,0 +1,4 @@
+bool use_latest  # True -> use latest frame (updates first_frame), False -> use first_frame
+---
+bool success
+string message   # JSON list of detections

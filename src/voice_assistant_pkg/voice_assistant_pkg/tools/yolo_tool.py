@@ -1,10 +1,9 @@
-#tools.yolo_tool.py
 import rclpy
 from rclpy.node import Node
-from std_srvs.srv import Trigger
+from custom_interfaces.srv import YoloDetect
 from langchain_core.tools import tool
 
-# Create a global node just once
+# Global ROS node
 _rcl_inited = False
 _node: Node | None = None
 
@@ -18,18 +17,20 @@ def _ensure_node():
     return _node
 
 @tool
-def describe_objects() -> str:
+def describe_objects(use_latest: bool = True) -> str:
     """
-    Detect and locate specific objects in the current camera view using YOLO object detection.
-    Use this when the user asks about specific objects, their locations, positions, or coordinates.
-    Returns detailed information about detected objects including their positions and confidence scores.
+    Detect objects using YOLO.
+    - use_latest=True: uses latest frame (and updates first_frame)
+    - use_latest=False: uses first_frame
     """
     node = _ensure_node()
-    client = node.create_client(Trigger, 'yolo_detect')
+    client = node.create_client(YoloDetect, 'yolo_detect')
     if not client.wait_for_service(timeout_sec=15.0):
         return "YOLO service not available."
 
-    req = Trigger.Request()
+    req = YoloDetect.Request()
+    req.use_latest = use_latest
+
     future = client.call_async(req)
     rclpy.spin_until_future_complete(node, future, timeout_sec=30.0)
 

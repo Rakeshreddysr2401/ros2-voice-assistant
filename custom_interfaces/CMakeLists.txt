@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 "msg/ImageDescription.msg"
 "msg/VisualQuery.msg"
   "srv/QwenVision.srv"
+  "srv/YoloDetect.srv"
  )
 
 ament_export_dependencies(rosidl_default_runtime)

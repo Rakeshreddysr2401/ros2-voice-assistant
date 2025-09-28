@@ -2,13 +2,11 @@ import os
 import cv2
 import threading
 import time
-import numpy as np
+from ultralytics import YOLO
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
-from ultralytics import YOLO
-
+from custom_interfaces.srv import YoloDetect  # <-- custom service
 
 class YoloServer(Node):
     def __init__(self):
@@ -27,71 +25,69 @@ class YoloServer(Node):
 
         # Load YOLO model
         self.get_logger().info("Loading YOLOv8s model...")
-        self.yolo_model = YOLO("yolov8s.pt")  # You can change to yolov8s.pt for better accuracy
-        self.get_logger().info("✅ YOLOv8n model loaded!")
+        self.yolo_model = YOLO("yolov8s.pt")
+        self.get_logger().info("✅ YOLO model loaded!")
 
-        # Frame buffer and detection cache
+        # Frame buffers
         self.latest_frame = None
+        self.first_frame = None
         self.latest_detections = []
         self.lock = threading.Lock()
         self.running = True
+
         self.thread = threading.Thread(target=self.camera_loop, daemon=True)
         self.thread.start()
 
-        # Subscribe to user_input to trigger detection
+        # Subscribe to user input
         self.input_sub = self.create_subscription(String, 'user_input', self.on_user_input, 10)
 
-        # Trigger service
-        self.detect_srv = self.create_service(Trigger, "yolo_detect", self.handle_detect_service)
+        # Custom service
+        self.detect_srv = self.create_service(YoloDetect, "yolo_detect", self.handle_detect_service)
 
         self.get_logger().info("🤖 YOLO Detection Server ready (service: /yolo_detect, subscriber: /user_input)")
 
+    # ---------------- Camera Loop ----------------
     def camera_loop(self):
         while self.running and self.cap.isOpened():
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
                     self.latest_frame = frame.copy()
+                    if self.first_frame is None:
+                        self.first_frame = frame.copy()
             time.sleep(0.05)
 
+    # ---------------- User Input ----------------
     def on_user_input(self, msg: String):
-        """Run YOLO detection when user input is received"""
         self.get_logger().info(f"User input received: {msg.data[:50]}... - Running YOLO detection")
-        self.run_yolo_detection()
+        self.run_yolo_detection(use_latest=True)
 
-    def run_yolo_detection(self):
-        frame = None
+    # ---------------- Detection ----------------
+    def run_yolo_detection(self, use_latest=True):
         with self.lock:
-            if self.latest_frame is not None:
-                frame = self.latest_frame.copy()
+            if use_latest:
+                frame = self.latest_frame.copy() if self.latest_frame is not None else None
+                if frame is not None:
+                    self.first_frame = frame.copy()
+            else:
+                frame = self.first_frame.copy() if self.first_frame is not None else None
 
         if frame is None:
-            self.get_logger().warning("⚠️ No camera frame available for YOLO detection")
+            self.get_logger().warning("⚠️ No frame available for YOLO detection")
             with self.lock:
                 self.latest_detections = []
             return
 
         try:
-            # Ensure frame is valid BGR
-            if len(frame.shape) != 3 or frame.shape[2] != 3:
-                self.get_logger().warning("⚠️ Invalid frame shape, skipping detection")
-                return
-
-            # Run YOLO with lower confidence threshold
             results = self.yolo_model.predict(source=frame, conf=0.5, verbose=False)
-
             detections = []
             for r in results:
                 for box in r.boxes:
                     cls_id = int(box.cls)
                     label = r.names[cls_id]
                     conf = float(box.conf)
-                    xyxy = box.xyxy.cpu().numpy().tolist()[0]  # [x1, y1, x2, y2]
-                    detections.append({
-                        "label": label,
-                        "confidence": conf,
-                        "bbox": xyxy
-                    })
+                    xyxy = box.xyxy.cpu().numpy().tolist()[0]
+                    detections.append({"label": label, "confidence": conf, "bbox": xyxy})
 
             with self.lock:
                 self.latest_detections = detections
@@ -103,35 +99,32 @@ class YoloServer(Node):
             with self.lock:
                 self.latest_detections = []
 
+    # ---------------- Service ----------------
     def handle_detect_service(self, request, response):
-        """Service handler - returns pre-generated detections"""
+        use_latest = request.use_latest
+        self.get_logger().info(f"YOLO detect request received: use_latest={use_latest}")
+
+        self.run_yolo_detection(use_latest=use_latest)
         with self.lock:
             detections = self.latest_detections
 
-        if detections is None or len(detections) == 0:
-            # Fallback: run detection on-demand
-            self.get_logger().info("No pre-generated detections, running on-demand...")
-            self.run_yolo_detection()
-            with self.lock:
-                detections = self.latest_detections
-
-        if detections is None or len(detections) == 0:
+        if not detections:
             response.success = False
             response.message = "⚠️ No objects detected"
         else:
             response.success = True
             response.message = str(detections)
-            self.get_logger().info(f"Returning cached detections: {detections}")
 
         return response
 
+    # ---------------- Cleanup ----------------
     def destroy_node(self):
         self.running = False
         if self.cap.isOpened():
             self.cap.release()
         super().destroy_node()
 
-
+# ---------------- Main ----------------
 def main(args=None):
     rclpy.init(args=args)
     node = YoloServer()
