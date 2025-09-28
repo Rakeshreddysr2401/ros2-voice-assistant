@@ -14,13 +14,26 @@ import threading
 
 
 class InputNode(Node):
-    """Voice -> Text using tiny Whisper with lightweight CPU optimizations"""
+    """Modular Input Node: Voice -> Text using Whisper OR Text via Console"""
 
     def __init__(self):
         super().__init__('input_node')
         self.pub = self.create_publisher(String, 'user_input', 10)
 
-        # Whisper model (tiny/int8 = fast on Pi5)
+        # Mode selection: "voice" or "text"
+        self.mode = os.getenv("INPUT_MODE", "text").lower()
+
+        if self.mode == "text":
+            self.get_logger().info("🖊️ InputNode running in TEXT mode")
+            self.text_thread = threading.Thread(target=self._text_input_loop, daemon=True)
+            self.text_thread.start()
+        else:
+            self.get_logger().info("🎤 InputNode running in VOICE mode")
+            self._init_voice_pipeline()
+
+    # ---------------- Voice Pipeline ----------------
+    def _init_voice_pipeline(self):
+        # Whisper model
         model_size = os.getenv("WHISPER_MODEL_SIZE", "tiny")
         self.model = WhisperModel(
             model_size,
@@ -30,12 +43,13 @@ class InputNode(Node):
             cpu_threads=2
         )
 
+        # Audio settings
         self.sample_rate = 16000
         self.blocksize = 3200  # ~0.2s chunks
 
-        # Short buffer, fast turnaround
+        # Short buffer
         self.audio_buffer = deque(maxlen=48000)  # ~3s
-        self.min_audio_length = 8000  # 0.5s
+        self.min_audio_length = 8000  # ~0.5s
         self.silence_threshold = 0.8  # End of phrase
 
         # Mic input queue
@@ -49,8 +63,8 @@ class InputNode(Node):
         )
         self.stream.start()
 
-        # VAD (voice activity detection)
-        self.vad = webrtcvad.Vad(2)  # balanced
+        # VAD
+        self.vad = webrtcvad.Vad(2)
 
         # Tracking speech
         self.last_speech_time = 0
@@ -58,10 +72,10 @@ class InputNode(Node):
         self.speech_frames = []
         self.processing = False
 
-        # Run processing loop every 200ms
+        # Timer for processing audio
         self.timer = self.create_timer(0.2, self._process_audio)
 
-        # Background transcription thread
+        # Transcription thread
         self.transcription_queue = queue.Queue(maxsize=2)
         self.transcription_thread = threading.Thread(
             target=self._transcription_worker,
@@ -69,7 +83,7 @@ class InputNode(Node):
         )
         self.transcription_thread.start()
 
-        self.get_logger().info(f"🎤 InputNode ready (Whisper {model_size}, CPU optimized)")
+        self.get_logger().info(f"🎤 Whisper ({model_size}) Voice Pipeline Ready")
 
     def _audio_cb(self, indata, frames, t, status):
         if status:
@@ -94,7 +108,7 @@ class InputNode(Node):
 
         audio_chunks = []
         try:
-            for _ in range(5):  # limit per cycle
+            for _ in range(5):
                 audio_chunks.append(self.q.get_nowait())
         except queue.Empty:
             pass
@@ -105,7 +119,7 @@ class InputNode(Node):
         audio_data = np.concatenate(audio_chunks).astype(np.float32) / 32768.0
         current_time = time.time()
 
-        # Quick RMS check to skip silence
+        # RMS + VAD check
         rms = np.sqrt(np.mean(audio_data ** 2))
         has_speech = rms >= 0.001 and self._is_speech_simple(audio_data)
 
@@ -142,7 +156,6 @@ class InputNode(Node):
             self.processing = True
             audio_np = np.array(speech_data, dtype=np.float32)
 
-            # Fast transcription settings
             segments, _ = self.model.transcribe(
                 audio_np,
                 beam_size=1,
@@ -167,6 +180,21 @@ class InputNode(Node):
         finally:
             self.processing = False
 
+    # ---------------- Text Pipeline ----------------
+    def _text_input_loop(self):
+        while True:
+            try:
+                text = input("Type input: ").strip()
+                if text:
+                    msg = String()
+                    msg.data = text
+                    self.pub.publish(msg)
+                    self.get_logger().info(f"🖊️ {text}")
+            except EOFError:
+                break
+            except Exception as e:
+                self.get_logger().error(f"Text input error: {e}")
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -176,7 +204,8 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.stream.stop()
+        if node.mode == "voice":
+            node.stream.stop()
         node.destroy_node()
         rclpy.shutdown()
 
