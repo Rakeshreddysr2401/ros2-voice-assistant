@@ -46,17 +46,6 @@ class AgentNode(Node):
                 return "tools"
             return END
 
-        def reviewer_transition(state):
-            """Determine next step after reviewerAgent."""
-            feedback = state.get("review_feedback", {})
-            retry_count = state.get("retry_count", 0)
-            satisfied = feedback.get("satisfied", True)
-
-            if satisfied or retry_count > MAX_RETRIES:
-                return END
-            elif not satisfied and retry_count <= MAX_RETRIES:
-                return "agent"
-            return END
 
         """Create the LangGraph workflow"""
         workflow = StateGraph(AgentState)

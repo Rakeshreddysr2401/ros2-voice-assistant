@@ -23,6 +23,8 @@ def qwen_vision_tool(query: str, use_latest: bool = True) -> str:
         query: The text query for the image model.
         use_latest: If True, uses the most recent frame. If False, reuses the first captured frame.
     """
+
+    print(f"🤖 Searching Qwen Vision Tool with Query: {query} \n And using Latest Frame: {use_latest}\n")
     node = _ensure_node()
     client = node.create_client(QwenVision, 'qwen_vision_describe')
     if not client.wait_for_service(timeout_sec=30.0):

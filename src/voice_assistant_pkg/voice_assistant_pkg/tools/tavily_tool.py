@@ -12,6 +12,7 @@ tavily = TavilySearch(max_results=2)
 @tool
 def tavily_tool(query: str):
     """used it for general web search. like for unknown or realtime queries like current news, weather etc."""
+    print(f"🤖 Searching Tavily Tool with Query: {query}\n")
     return tavily.invoke({"query": query})
 
 

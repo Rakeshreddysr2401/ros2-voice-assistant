@@ -21,7 +21,7 @@ class InputNode(Node):
         self.pub = self.create_publisher(String, 'user_input', 10)
 
         # Mode selection: "voice" or "text"
-        self.mode = os.getenv("INPUT_MODE", "text").lower()
+        self.mode = os.getenv("INPUT_MODE", "voice").lower()
 
         if self.mode == "text":
             self.get_logger().info("🖊️ InputNode running in TEXT mode")
