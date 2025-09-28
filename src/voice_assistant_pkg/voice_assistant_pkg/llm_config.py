@@ -11,18 +11,18 @@ def get_llm():
     if not api_key:
         print("Warning: OPENAI_API_KEY environment variable not set")
         return None
-    return ChatOllama(
-        model="qwen2.5:7b",
-        base_url=f"http://{MAC}"
-    )
-
-    # return ChatOpenAI(
-    #     api_key=api_key,
-    #     model="gpt-3.5-turbo",
-    #     temperature=0.7,
-    #     max_tokens=1000,
-    #     timeout=30
+    # return ChatOllama(
+    #     model="qwen2.5:7b",
+    #     base_url=f"http://{MAC}"
     # )
+
+    return ChatOpenAI(
+        api_key=api_key,
+        model="gpt-3.5-turbo",
+        temperature=0.4,
+        max_tokens=1000,
+        timeout=30
+    )
 
 
 def get_llm_with_tools():

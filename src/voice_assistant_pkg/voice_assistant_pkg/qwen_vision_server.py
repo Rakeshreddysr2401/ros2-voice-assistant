@@ -73,7 +73,7 @@ class QwenVisionServer(Node):
 
         try:
             resp_text = ""
-            resp = requests.post(url, json=payload, stream=True, timeout=60)
+            resp = requests.post(url, json=payload, stream=True, timeout=70)
             resp.raise_for_status()
             for line in resp.iter_lines():
                 if not line:
@@ -111,9 +111,15 @@ class QwenVisionServer(Node):
     def handle_qwen_service(self, request, response):
         """Service callback for QwenVision.srv"""
         with self.lock:
-            frame = self.latest_frame.copy() if request.use_latest else (
-                self.first_frame.copy() if self.first_frame is not None else None
-            )
+            if request.use_latest:
+                if self.latest_frame is not None:
+                    frame = self.latest_frame.copy()
+                    # Update first_frame to the current latest
+                    self.first_frame = frame.copy()
+                else:
+                    frame = None
+            else:
+                frame = self.first_frame.copy() if self.first_frame is not None else None
 
         description = self.generate_description(request.query, frame)
 

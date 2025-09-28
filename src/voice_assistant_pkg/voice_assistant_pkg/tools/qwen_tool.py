@@ -25,7 +25,7 @@ def qwen_vision_tool(query: str, use_latest: bool = True) -> str:
     """
     node = _ensure_node()
     client = node.create_client(QwenVision, 'qwen_vision_describe')
-    if not client.wait_for_service(timeout_sec=15.0):
+    if not client.wait_for_service(timeout_sec=30.0):
         return "QwenVision service not available."
 
     req = QwenVision.Request()
@@ -33,7 +33,7 @@ def qwen_vision_tool(query: str, use_latest: bool = True) -> str:
     req.use_latest = use_latest
 
     future = client.call_async(req)
-    rclpy.spin_until_future_complete(node, future, timeout_sec=30.0)
+    rclpy.spin_until_future_complete(node, future, timeout_sec=75.0)
 
     if future.done() and future.result() is not None:
         res = future.result()
