@@ -21,7 +21,7 @@ def qwen_vision_tool(query: str, use_latest: bool = True) -> str:
     Ask the Qwen Vision server to describe an image.
     Args:
         query: The text query for the image model.
-        use_latest: If True, uses the most recent frame. If False, reuses the first captured frame.
+        use_latest: If True, uses the most recent frame. If False, reuses the previous captured frame.
     """
 
     print(f"🤖 Searching Qwen Vision Tool with Query: {query} \n And using Latest Frame: {use_latest}\n")
