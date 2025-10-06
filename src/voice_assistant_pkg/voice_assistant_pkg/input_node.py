@@ -20,6 +20,12 @@ class InputNode(Node):
         super().__init__('input_node')
         self.pub = self.create_publisher(String, 'user_input', 10)
 
+        # Subscribe to output status
+        self.create_subscription(String, 'output_status', self.output_status_callback, 10)
+
+        # Listening state control
+        self.listening_enabled = True
+
         # Mode selection: "voice" or "text"
         self.mode = os.getenv("INPUT_MODE", "voice").lower()
 
@@ -30,6 +36,12 @@ class InputNode(Node):
         else:
             self.get_logger().info("🎤 InputNode running in VOICE mode")
             self._init_voice_pipeline()
+
+    def output_status_callback(self, msg):
+        """Receive status from output_node"""
+        if msg.data == "speaking_done":
+            self.listening_enabled = True
+            self.get_logger().info("🎤 Listening resumed after speech")
 
     # ---------------- Voice Pipeline ----------------
     def _init_voice_pipeline(self):
@@ -103,7 +115,14 @@ class InputNode(Node):
         return False
 
     def _process_audio(self):
-        if self.processing:
+        if self.processing or not self.listening_enabled:
+            # Clear queue when not listening to prevent buildup
+            if not self.listening_enabled:
+                try:
+                    while True:
+                        self.q.get_nowait()
+                except queue.Empty:
+                    pass
             return
 
         audio_chunks = []
@@ -170,6 +189,10 @@ class InputNode(Node):
             if text_parts:
                 final_text = " ".join(" ".join(text_parts).split())
                 if final_text:
+                    # Disable listening after publishing
+                    self.listening_enabled = False
+                    self.get_logger().info("🔇 Listening paused")
+
                     msg = String()
                     msg.data = final_text
                     self.pub.publish(msg)

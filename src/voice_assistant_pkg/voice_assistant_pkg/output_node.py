@@ -20,6 +20,9 @@ class OutputNode(Node):
             self.handle_response,
             10
         )
+        # Publisher to notify input_node when done
+        self.status_pub = self.create_publisher(String, 'output_status', 10)
+
         self.get_logger().info("🔊 OutputNode started (Piper TTS).")
 
     def handle_response(self, msg):
@@ -54,6 +57,11 @@ class OutputNode(Node):
         time.sleep(0.2)
 
         self.get_logger().info("🎤 Mic resumed.")
+
+        # Notify input_node that speaking is done
+        status_msg = String()
+        status_msg.data = "speaking_done"
+        self.status_pub.publish(status_msg)
 
 
 def main(args=None):
