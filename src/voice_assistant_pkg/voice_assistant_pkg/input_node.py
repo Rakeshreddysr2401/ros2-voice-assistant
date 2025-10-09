@@ -45,28 +45,29 @@ class InputNode(Node):
 
     # ---------------- Voice Pipeline ----------------
     def _init_voice_pipeline(self):
-        # Whisper model
-        model_size = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+        # Whisper model - use base for better quality with acceptable speed
+        model_size = os.getenv("WHISPER_MODEL_SIZE", "base")  # Changed from "tiny"
         self.model = WhisperModel(
             model_size,
             device="cpu",
             compute_type="int8",
-            num_workers=1,
-            cpu_threads=2
+            num_workers=2,  # Increased from 1
+            cpu_threads=4  # Increased from 2
         )
 
         # Audio settings
         self.sample_rate = 16000
-        self.blocksize = 3200  # ~0.2s chunks
+        self.blocksize = 1600  # Reduced to ~0.1s for lower latency
 
-        # Short buffer
-        self.audio_buffer = deque(maxlen=48000)  # ~3s
-        self.min_audio_length = 8000  # ~0.5s
-        self.silence_threshold = 0.8  # End of phrase
+        # Adjusted buffer sizes for better responsiveness
+        self.audio_buffer = deque(maxlen=32000)  # Reduced from 48000
+        self.min_audio_length = 6400  # Reduced minimum (~0.4s)
+        self.silence_threshold = 0.6  # Reduced from 0.8 for faster cutoff
 
         # Mic input queue
-        self.q = queue.Queue(maxsize=10)
-        device_index = int(os.getenv("AUDIO_DEVICE_INDEX", "1"))  # Brio mic index
+        self.q = queue.Queue(maxsize=20)  # Increased from 10
+        device_index = int(os.getenv("AUDIO_DEVICE_INDEX", "1"))
+
         self.stream = sd.RawInputStream(
             samplerate=self.sample_rate,
             blocksize=self.blocksize,
@@ -78,7 +79,7 @@ class InputNode(Node):
 
         self.stream.start()
 
-        # VAD
+        # VAD - level 2 is balanced
         self.vad = webrtcvad.Vad(2)
 
         # Tracking speech
@@ -87,8 +88,8 @@ class InputNode(Node):
         self.speech_frames = []
         self.processing = False
 
-        # Timer for processing audio
-        self.timer = self.create_timer(0.2, self._process_audio)
+        # Reduced timer interval for faster processing
+        self.timer = self.create_timer(0.1, self._process_audio)  # Changed from 0.2
 
         # Transcription thread
         self.transcription_queue = queue.Queue(maxsize=2)
@@ -107,15 +108,24 @@ class InputNode(Node):
             self.q.put(np.frombuffer(indata, dtype=np.int16).copy())
 
     def _is_speech_simple(self, audio_chunk):
-        """Fast speech detection using VAD"""
+        """Fast speech detection using VAD with multiple frames"""
         audio_bytes = (audio_chunk * 32767).astype(np.int16).tobytes()
-        frame_size = 640  # 20ms @16kHz
-        if len(audio_bytes) >= frame_size:
+        frame_size = 320  # 20ms @16kHz
+
+        # Check multiple frames for better accuracy
+        speech_count = 0
+        total_frames = 0
+
+        for i in range(0, len(audio_bytes) - frame_size, frame_size):
             try:
-                return self.vad.is_speech(audio_bytes[:frame_size], self.sample_rate)
+                if self.vad.is_speech(audio_bytes[i:i + frame_size], self.sample_rate):
+                    speech_count += 1
+                total_frames += 1
             except:
-                return False
-        return False
+                pass
+
+        # Return True if at least 40% of frames are speech
+        return total_frames > 0 and (speech_count / total_frames) >= 0.4
 
     def _process_audio(self):
         if self.processing or not self.listening_enabled:
@@ -130,7 +140,8 @@ class InputNode(Node):
 
         audio_chunks = []
         try:
-            for _ in range(5):
+            # Process more chunks at once for smoother flow
+            for _ in range(10):  # Increased from 5
                 audio_chunks.append(self.q.get_nowait())
         except queue.Empty:
             pass
@@ -141,15 +152,16 @@ class InputNode(Node):
         audio_data = np.concatenate(audio_chunks).astype(np.float32) / 32768.0
         current_time = time.time()
 
-        # RMS + VAD check
+        # Improved RMS + VAD check with lower threshold
         rms = np.sqrt(np.mean(audio_data ** 2))
-        has_speech = rms >= 0.001 and self._is_speech_simple(audio_data)
+        has_speech = rms >= 0.0008 and self._is_speech_simple(audio_data)  # Lowered from 0.001
 
         if has_speech:
             self.last_speech_time = current_time
             if not self.is_recording:
                 self.is_recording = True
                 self.speech_frames = []
+                self.get_logger().info("🎙️ Speech detected, recording...")
 
         if self.is_recording:
             self.speech_frames.extend(audio_data)
@@ -157,6 +169,7 @@ class InputNode(Node):
             if (current_time - self.last_speech_time > self.silence_threshold
                     and len(self.speech_frames) >= self.min_audio_length):
                 if not self.transcription_queue.full():
+                    self.get_logger().info("⏸️ Silence detected, transcribing...")
                     self.transcription_queue.put(self.speech_frames.copy())
                 self.speech_frames = []
                 self.is_recording = False
@@ -178,14 +191,21 @@ class InputNode(Node):
             self.processing = True
             audio_np = np.array(speech_data, dtype=np.float32)
 
-            segments, _ = self.model.transcribe(
+            # Improved transcription parameters
+            segments, info = self.model.transcribe(
                 audio_np,
-                beam_size=1,
-                best_of=1,
+                beam_size=3,  # Increased from 1 for better quality
+                best_of=3,  # Increased from 1
                 language="en",
                 temperature=0.0,
                 condition_on_previous_text=False,
-                no_speech_threshold=0.6,
+                no_speech_threshold=0.5,  # Lowered from 0.6
+                vad_filter=True,  # Added VAD filtering
+                vad_parameters=dict(
+                    threshold=0.5,
+                    min_speech_duration_ms=250,
+                    min_silence_duration_ms=500
+                )
             )
 
             text_parts = [seg.text.strip() for seg in segments if seg.text.strip()]
