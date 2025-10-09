@@ -31,6 +31,7 @@ setup(
             'test_yolo_camera = voice_assistant_pkg.test_yolo_camera:main',
             'blip_server = voice_assistant_pkg.blip_server:main',
             'qwen_vision_server = voice_assistant_pkg.qwen_vision_server:main',
+'camera_publisher_node = voice_assistant_pkg.camera_publisher_node:main',
 'yolo_server = voice_assistant_pkg.yolo_server:main',
 'llava_server = voice_assistant_pkg.llava_server:main',
 

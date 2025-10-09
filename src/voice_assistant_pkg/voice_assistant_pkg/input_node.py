@@ -27,7 +27,7 @@ class InputNode(Node):
         self.listening_enabled = True
 
         # Mode selection: "voice" or "text"
-        self.mode = os.getenv("INPUT_MODE", "voice").lower()
+        self.mode = os.getenv("INPUT_MODEZ", "voice").lower()
 
         if self.mode == "text":
             self.get_logger().info("🖊️ InputNode running in TEXT mode")
@@ -66,13 +66,16 @@ class InputNode(Node):
 
         # Mic input queue
         self.q = queue.Queue(maxsize=10)
+        device_index = int(os.getenv("AUDIO_DEVICE_INDEX", "1"))  # Brio mic index
         self.stream = sd.RawInputStream(
             samplerate=self.sample_rate,
             blocksize=self.blocksize,
             dtype='int16',
             channels=1,
+            device=device_index,
             callback=self._audio_cb,
         )
+
         self.stream.start()
 
         # VAD

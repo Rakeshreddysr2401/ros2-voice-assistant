@@ -1,27 +1,20 @@
+#!/usr/bin/env python3
 import os
 import cv2
 import threading
 import time
+import numpy as np
 from ultralytics import YOLO
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from custom_interfaces.srv import YoloDetect  # <-- custom service
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
+from custom_interfaces.srv import YoloDetect  # your custom service
 
 class YoloServer(Node):
     def __init__(self):
         super().__init__("yolo_server")
-
-        # Camera setup
-        camera_source = os.getenv("CAMERA_SOURCE", "0")
-        if camera_source.isdigit():
-            camera_source = int(camera_source)
-
-        self.get_logger().info(f"Connecting to camera: {camera_source}")
-        self.cap = cv2.VideoCapture(camera_source)
-        if not self.cap.isOpened():
-            self.get_logger().error(f"❌ Failed to open camera {camera_source}")
-            raise SystemExit(1)
 
         # Load YOLO model
         self.get_logger().info("Loading YOLOv8s model...")
@@ -29,14 +22,18 @@ class YoloServer(Node):
         self.get_logger().info("✅ YOLO model loaded!")
 
         # Frame buffers
+        self.bridge = CvBridge()
         self.latest_frame = None
-        self.first_frame = None
         self.latest_detections = []
         self.lock = threading.Lock()
-        self.running = True
 
-        self.thread = threading.Thread(target=self.camera_loop, daemon=True)
-        self.thread.start()
+        # Subscribe to shared camera topic
+        self.image_sub = self.create_subscription(
+            CompressedImage,
+            '/camera/image_raw/compressed',
+            self.image_callback,
+            10
+        )
 
         # Subscribe to user input
         self.input_sub = self.create_subscription(String, 'user_input', self.on_user_input, 10)
@@ -44,33 +41,25 @@ class YoloServer(Node):
         # Custom service
         self.detect_srv = self.create_service(YoloDetect, "yolo_detect", self.handle_detect_service)
 
-        self.get_logger().info("🤖 YOLO Detection Server ready (service: /yolo_detect, subscriber: /user_input)")
+        self.get_logger().info("🤖 YOLO Detection Server ready (listening on /camera/image_raw/compressed)")
 
-    # ---------------- Camera Loop ----------------
-    def camera_loop(self):
-        while self.running and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.latest_frame = frame.copy()
-                    if self.first_frame is None:
-                        self.first_frame = frame.copy()
-            time.sleep(0.05)
+    def image_callback(self, msg: CompressedImage):
+        """Receive shared camera frames"""
+        try:
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            with self.lock:
+                self.latest_frame = frame
+        except Exception as e:
+            self.get_logger().error(f"Error decoding image: {e}")
 
-    # ---------------- User Input ----------------
     def on_user_input(self, msg: String):
         self.get_logger().info(f"User input received: {msg.data[:50]}... - Running YOLO detection")
-        self.run_yolo_detection(use_latest=True)
+        self.run_yolo_detection()
 
-    # ---------------- Detection ----------------
-    def run_yolo_detection(self, use_latest=True):
+    def run_yolo_detection(self):
         with self.lock:
-            if use_latest:
-                frame = self.latest_frame.copy() if self.latest_frame is not None else None
-                if frame is not None:
-                    self.first_frame = frame.copy()
-            else:
-                frame = self.first_frame.copy() if self.first_frame is not None else None
+            frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
         if frame is None:
             self.get_logger().warning("⚠️ No frame available for YOLO detection")
@@ -99,32 +88,29 @@ class YoloServer(Node):
             with self.lock:
                 self.latest_detections = []
 
-    # ---------------- Service ----------------
     def handle_detect_service(self, request, response):
-        use_latest = request.use_latest
-        self.get_logger().info(f"YOLO detect request received: use_latest={use_latest}")
-
-        self.run_yolo_detection(use_latest=use_latest)
+        """Custom service to run detection with on-demand fallback"""
         with self.lock:
             detections = self.latest_detections
 
         if not detections:
+            # Fallback: generate detections on-demand if none exist
+            self.get_logger().info("No pre-generated detections, running detection on-demand...")
+            self.run_yolo_detection()
+            with self.lock:
+                detections = self.latest_detections
+
+        if not detections:
             response.success = False
-            response.message = "⚠️ No objects detected"
+            response.message = "⚠️ No objects detected or no frame available"
         else:
             response.success = True
             response.message = str(detections)
+            self.get_logger().info(f"Returning detections: {detections}")
 
         return response
 
-    # ---------------- Cleanup ----------------
-    def destroy_node(self):
-        self.running = False
-        if self.cap.isOpened():
-            self.cap.release()
-        super().destroy_node()
 
-# ---------------- Main ----------------
 def main(args=None):
     rclpy.init(args=args)
     node = YoloServer()

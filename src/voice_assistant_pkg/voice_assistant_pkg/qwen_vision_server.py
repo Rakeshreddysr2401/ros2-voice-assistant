@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import io
 import cv2
@@ -6,11 +7,14 @@ import base64
 import json
 import threading
 import requests
+import numpy as np
 from PIL import Image
 
 import rclpy
 from rclpy.node import Node
-from custom_interfaces.srv import QwenVision   # <-- NEW import
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
+from custom_interfaces.srv import QwenVision
 
 
 class QwenVisionServer(Node):
@@ -22,41 +26,36 @@ class QwenVisionServer(Node):
         self.ollama_port = int(os.getenv("OLLAMA_PORT", 11434))
         self.model = os.getenv("MODEL", "qwen2.5vl:3b")
 
-        # Camera setup
-        camera_source = os.getenv("CAMERA_SOURCE", "0")
-        if camera_source.isdigit():
-            camera_source = int(camera_source)
-
-        self.get_logger().info(f"Connecting to camera: {camera_source}")
-        self.cap = cv2.VideoCapture(camera_source)
-        if not self.cap.isOpened():
-            self.get_logger().error(f"Failed to open camera {camera_source}")
-            raise SystemExit(1)
-
         # Frame buffers
+        self.bridge = CvBridge()
         self.latest_frame = None
         self.first_frame = None
         self.lock = threading.Lock()
-        self.running = True
 
-        # Start camera thread
-        self.thread = threading.Thread(target=self.camera_loop, daemon=True)
-        self.thread.start()
+        # Subscribe to shared camera topic
+        self.image_sub = self.create_subscription(
+            CompressedImage,
+            '/camera/image_raw/compressed',
+            self.image_callback,
+            10
+        )
 
         # ROS service
         self.qwen_srv = self.create_service(QwenVision, "qwen_vision_describe", self.handle_qwen_service)
 
         self.get_logger().info("🤖 Qwen Vision Server ready (service: /qwen_vision_describe)")
 
-    def camera_loop(self):
-        while self.running and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.latest_frame = frame.copy()
-                    if self.first_frame is None:
-                        self.first_frame = frame.copy()
-            time.sleep(0.05)
+    def image_callback(self, msg: CompressedImage):
+        """Receive frames from shared camera"""
+        try:
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            with self.lock:
+                self.latest_frame = frame
+                if self.first_frame is None:
+                    self.first_frame = frame.copy()
+        except Exception as e:
+            self.get_logger().error(f"Error decoding frame: {e}")
 
     def pil_image_to_b64(self, pil_img: Image.Image) -> str:
         buff = io.BytesIO()
@@ -125,19 +124,13 @@ class QwenVisionServer(Node):
 
         if description is None:
             response.success = False
-            response.description = "⚠️ Failed to generate description"
+            response.description = "⚠️ Failed to generate description or no frame available"
         else:
             response.success = True
             response.description = description
             self.get_logger().info(f"✅ Returning description: {description[:200]}")
 
         return response
-
-    def destroy_node(self):
-        self.running = False
-        if self.cap.isOpened():
-            self.cap.release()
-        super().destroy_node()
 
 
 def main(args=None):

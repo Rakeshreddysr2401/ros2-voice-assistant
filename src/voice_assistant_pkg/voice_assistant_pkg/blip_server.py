@@ -1,13 +1,16 @@
-#blip_server.py
+#!/usr/bin/env python3
 import os
 import cv2
 import threading
+import numpy as np
 import time
 from PIL import Image
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
 
@@ -15,61 +18,55 @@ class BlipServer(Node):
     def __init__(self):
         super().__init__("blip_server")
 
-        # Camera setup
-        camera_source = os.getenv("CAMERA_SOURCE", "0")
-        if camera_source.isdigit():
-            camera_source = int(camera_source)
-
-        self.get_logger().info(f"Connecting to camera: {camera_source}")
-        self.cap = cv2.VideoCapture(camera_source)
-        if not self.cap.isOpened():
-            self.get_logger().error(f"❌ Failed to open camera {camera_source}")
-            raise SystemExit(1)
-
         # Load BLIP captioning model
         self.get_logger().info("Loading BLIP captioning model...")
         self.caption_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
         self.caption_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
         self.get_logger().info("✅ Captioning model loaded!")
 
-        # Frame buffer and description cache
+        # Frame and description buffers
+        self.bridge = CvBridge()
         self.latest_frame = None
         self.latest_description = None
         self.lock = threading.Lock()
-        self.running = True
-        self.thread = threading.Thread(target=self.camera_loop, daemon=True)
-        self.thread.start()
 
-        # Subscribe to user_input to trigger description generation
+        # Subscribe to shared camera topic
+        self.image_sub = self.create_subscription(
+            CompressedImage,
+            '/camera/image_raw/compressed',
+            self.image_callback,
+            10
+        )
+
+        # Subscribe to user_input topic
         self.input_sub = self.create_subscription(String, 'user_input', self.on_user_input, 10)
 
-        # Trigger service
+        # Create service
         self.describe_srv = self.create_service(Trigger, "blip_describe", self.handle_describe_service)
 
-        self.get_logger().info("🤖 BLIP Captioning Server ready (service: /blip_describe, subscriber: /user_input)")
+        self.get_logger().info("🤖 BLIP Captioning Server ready (subscribing to /camera/image_raw/compressed)")
 
-    def camera_loop(self):
-        while self.running and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.latest_frame = frame.copy()
-            time.sleep(0.05)
+    def image_callback(self, msg: CompressedImage):
+        """Receive frames from shared camera"""
+        try:
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            with self.lock:
+                self.latest_frame = frame
+        except Exception as e:
+            self.get_logger().error(f"Error decoding frame: {e}")
 
     def on_user_input(self, msg: String):
-        """Generate image description when user input is received"""
-        self.get_logger().info(f"User input received: {msg.data[:50]}... - Generating image description")
+        """Generate caption when user speaks"""
+        self.get_logger().info(f"User input received: {msg.data[:50]}... - Generating caption")
         self.generate_description()
 
     def generate_description(self):
-        """Generate description from current frame"""
-        frame = None
         with self.lock:
-            if self.latest_frame is not None:
-                frame = self.latest_frame.copy()
+            frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
         if frame is None:
-            self.get_logger().warning("⚠️ No camera frame available for description")
+            self.get_logger().warning("⚠️ No frame available for description")
             with self.lock:
                 self.latest_description = None
             return
@@ -83,39 +80,34 @@ class BlipServer(Node):
             with self.lock:
                 self.latest_description = result
 
-            self.get_logger().info(f"✅ Description ready: {result}")
+            self.get_logger().info(f"🖼️ Description ready: {result}")
+
         except Exception as e:
             self.get_logger().error(f"Error generating description: {e}")
             with self.lock:
                 self.latest_description = None
 
     def handle_describe_service(self, request, response):
-        """Service handler - returns pre-generated description"""
+        """Service handler - returns pre-generated description or generates on-demand"""
         with self.lock:
-            description = self.latest_description
+            desc = self.latest_description
 
-        if description is None:
+        if desc is None:
             # Fallback: generate description on-demand if none exists
             self.get_logger().info("No pre-generated description, generating on-demand...")
             self.generate_description()
             with self.lock:
-                description = self.latest_description
+                desc = self.latest_description
 
-        if description is None:
+        if desc:
+            response.success = True
+            response.message = desc
+            self.get_logger().info(f"Returning description: {desc}")
+        else:
             response.success = False
             response.message = "⚠️ No camera frame available or failed to generate description"
-        else:
-            response.success = True
-            response.message = description
-            self.get_logger().info(f"Returning cached description: {description}")
 
         return response
-
-    def destroy_node(self):
-        self.running = False
-        if self.cap.isOpened():
-            self.cap.release()
-        super().destroy_node()
 
 
 def main(args=None):
