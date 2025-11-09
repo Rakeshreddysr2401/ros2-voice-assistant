@@ -5,7 +5,7 @@ from .yolo_tool import describe_objects
 from .qwen_tool import qwen_vision_tool
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import Tool, StructuredTool
-
+from .light_tool import set_traffic_light
 
 def wrap_tool(func):
     """Wrap a function as a Tool, ensuring it has a name and description.
@@ -28,7 +28,8 @@ def get_tools():
         wrap_tool(qwen_vision_tool),
         wrap_tool(describe_objects),
         wrap_tool(qdrant_search_tool),
-        wrap_tool(tavily_tool)
+        wrap_tool(tavily_tool),
+        wrap_tool(set_traffic_light)
     ]
 
 
@@ -50,6 +51,7 @@ def build_system_message(tools):
         "- When asked about specific objects, their locations, or detection tasks, use describe_objects to get object coordinates\n"
         "- For questions requiring recent information or web search, use tavily_tool\n"
         "- For knowledge base queries which are personal, use qdrant_search_tool\n"
+         "- For Light turn on off queries which are red,green,orange, use light_tool\n"
         "Respond naturally and conversationally in short, integrating tool results smoothly into your answers."
     )
     return SystemMessage(content=content)
