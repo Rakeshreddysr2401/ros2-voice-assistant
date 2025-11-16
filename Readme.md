@@ -22,3 +22,15 @@ ros2 run voice_assistant_pkg qwen_vision_server
 source /opt/ros/jazzy/setup.bash
 source ~/microros_ws/install/setup.bash
 source ~/ros2_ws/install/setup.bash
+
+
+
+
+source /opt/ros/jazzy/setup.bash
+source ~/microros_ws/install/local_setup.bash   # if you built the agent here; else skip if installed by snap
+ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888
+
+
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 run voice_assistant_pkg servo_publisher

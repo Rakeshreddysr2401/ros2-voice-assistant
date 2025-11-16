@@ -12,6 +12,7 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
 "msg/ImageDescription.msg"
 "msg/VisualQuery.msg"
+"msg/AngleSpeed.msg"
   "srv/QwenVision.srv"
   "srv/YoloDetect.srv"
  )

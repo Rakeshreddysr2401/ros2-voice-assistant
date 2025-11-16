@@ -5,7 +5,8 @@ from .yolo_tool import describe_objects
 from .qwen_tool import qwen_vision_tool
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import Tool, StructuredTool
-from .light_tool import set_traffic_light
+from .lt import set_traffic_light
+from .servo_tool import move_servos
 
 def wrap_tool(func):
     """Wrap a function as a Tool, ensuring it has a name and description.
@@ -29,7 +30,8 @@ def get_tools():
         wrap_tool(describe_objects),
         wrap_tool(qdrant_search_tool),
         wrap_tool(tavily_tool),
-        wrap_tool(set_traffic_light)
+        wrap_tool(set_traffic_light),
+        wrap_tool(move_servos)
     ]
 
 
