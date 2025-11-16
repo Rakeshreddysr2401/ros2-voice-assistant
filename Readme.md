@@ -34,3 +34,64 @@ ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 run voice_assistant_pkg servo_publisher
+
+
+
+
+┌─────────────┐
+│   VOICE     │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│ input_node  │ (Speech-to-Text)
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────┐
+│       agent_node                │
+│  ┌───────────────────────────┐  │
+│  │  LangGraph + OpenAI       │  │
+│  │                           │  │
+│  │  Tools:                   │  │
+│  │  ├─ move_servos          │  │
+│  │  ├─ qwen_vision_tool     │  │
+│  │  ├─ describe_objects     │  │
+│  │  ├─ qdrant_search_tool   │  │
+│  │  ├─ tavily_tool          │  │
+│  │  └─ set_traffic_light    │  │
+│  └───────────────────────────┘  │
+└──────┬──────────────┬───────────┘
+       │              │
+       ▼              ▼
+┌─────────────┐  ┌─────────────┐
+│output_node  │  │servo_control│ Topic
+└─────────────┘  └──────┬──────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │servo_publisher│
+                 └──────┬───────┘
+                        │
+                        ▼
+                 ┌──────────────┐
+                 │servo_commands│ Topic
+                 └──────┬───────┘
+                        │
+                        ▼
+               ┌─────────────────┐
+               │ micro-ROS Agent │
+               └────────┬────────┘
+                        │ USB
+                        ▼
+                 ┌─────────────┐
+                 │    ESP32    │
+                 └──────┬──────┘
+                        │
+              ┌─────────┴─────────┐
+              │                   │
+              ▼                   ▼
+        ┌──────────┐        ┌──────────┐
+        │  LEFT    │        │  RIGHT   │
+        │  SERVO   │        │  SERVO   │
+        └──────────┘        └──────────┘
