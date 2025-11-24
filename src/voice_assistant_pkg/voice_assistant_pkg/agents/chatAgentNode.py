@@ -1,4 +1,4 @@
-# chains/chatAgentNode.py
+# agents/chatAgentNode.py
 from langchain_core.messages import SystemMessage,AIMessage
 from ..states.states import AgentState
 from ..llm_config import llm_with_tools
