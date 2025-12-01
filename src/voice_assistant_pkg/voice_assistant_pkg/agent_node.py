@@ -1,185 +1,161 @@
 #!/usr/bin/env python3
 """
-agent_node_main.py — Actual DeepAgents ROS2 Node
-
-Subagents:
-- research-subagent (Tavily)
-- memory-subagent  (Qdrant)
-- communication-subagent (speak_tool)
-
-The agent decides when to speak by calling speak_tool(message).
-This publishes to /agent_response → picked up by output_node (TTS).
+agent_node.py — DeepAgents ROS2 Node (TOOLS FIXED: no class-method tools)
 """
 
 import os
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-# DeepAgents
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
 from langgraph.store.memory import InMemoryStore
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-# LangChain
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain.tools import tool
 
-# Tavily
 from tavily import TavilyClient
 
-# Qdrant
 from qdrant_client import QdrantClient
 from langchain_qdrant import Qdrant
 from langchain_openai import OpenAIEmbeddings
 
-# Logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger("agent_node")
+
+# ---------------- LOGGING ----------------
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("AgentNode")
 
 
-# ================================
-# ENV VARS
-# ================================
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# ---------------- ENV ----------------
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_URL     = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "personal_knowledge_base")
 MODEL_NAME_EMBED = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 QDRANT_TOP_K = int(os.getenv("QDRANT_TOP_K", "3"))
+AGENT_MODEL  = os.getenv("AGENT_MODEL", "openai:gpt-4o-mini")
 
-AGENT_MODEL = os.getenv("AGENT_MODEL", "openai:gpt-4o-mini")
+
+# ==================================================================
+#  FIXED TOOLS — PLAIN FUNCTIONS (NO METHODS!)
+# ==================================================================
+
+_shared_agent_node = None   # global pointer used by speak tool
 
 
-# ================================
-# SPEAK TOOL
-# ================================
-class SpeakWrapper:
+@tool
+def speak_tool(message: str) -> str:
     """
-    Tool to publish text to agent_response topic.
-    ROS2 publisher accessed through AgentNode._shared_instance
+    Publish text to /agent_response → OutputNode (TTS).
     """
+    global _shared_agent_node
+    if _shared_agent_node is None:
+        return "[error: AgentNode not ready]"
 
-    @tool
-    def speak_tool(self, message: str) -> str:
-        """
-        Publish text to /agent_response so TTS can speak it.
-        Returns confirmation to the LLM: "[spoken] text".
-        """
-        node = AgentNode._shared_instance
-        if node is None:
-            return "[speak_tool error: AgentNode not ready]"
+    msg = String()
+    msg.data = message
+    _shared_agent_node.pub_response.publish(msg)
 
-        msg = String()
-        msg.data = message
-        node.pub_response.publish(msg)
-
-        log.info(f"[Tool] speak_tool published: {message}")
-        return f"[spoken] {message}"
+    log.info(f"[TOOL:speak_tool] Published: {message}")
+    return f"[spoken] {message}"
 
 
-speak_wrapper = SpeakWrapper()
-speak_tool_fn = speak_wrapper.speak_tool
+# ---------------- Tavily setup ----------------
+if TAVILY_API_KEY:
+    tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+else:
+    tavily_client = None
 
 
-# ================================
-# TAVILY TOOL
-# ================================
-class TavilyWrapper:
+@tool
+def tavily_tool(query: str, max_results: int = 5) -> str:
+    """
+    Perform a Tavily web search and return formatted results.
+    """
+    log.info(f"[TOOL:tavily_tool] Query={query}")
 
-    def __init__(self):
-        self.client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
+    if tavily_client is None:
+        return "Tavily not configured."
 
-    @tool
-    def tavily_tool(self, query: str, max_results: int = 5, topic: str = "general") -> str:
-        """
-        Perform Tavily web research.
-        """
-        if not self.client:
-            return "Tavily not configured."
+    try:
+        res = tavily_client.search(query=query, max_results=max_results)
+        results = res.get("results", [])
+        if not results:
+            return "No Tavily results."
 
-        try:
-            res = self.client.search(query=query, max_results=max_results, topic=topic)
-            out = []
-            for r in res.get("results", []):
-                out.append(
-                    f"- {r.get('title')} | {r.get('url')}\n  {r.get('content')[:200]}"
-                )
-            return "\n".join(out) if out else "No results."
-        except Exception as e:
-            return f"Tavily error: {str(e)}"
+        text = "\n".join(
+            f"- {r.get('title')} | {r.get('url')}\n  {r.get('content')[:200]}"
+            for r in results
+        )
+        return text
+
+    except Exception as e:
+        return f"Tavily error: {str(e)}"
 
 
-tavily_wrapper = TavilyWrapper()
-tavily_tool_fn = tavily_wrapper.tavily_tool
+# ---------------- Qdrant setup ----------------
+try:
+    if QDRANT_URL and QDRANT_API_KEY:
+        q_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        q_emb = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
+        q_vectorstore = Qdrant(client=q_client,
+                               collection_name=QDRANT_COLLECTION,
+                               embeddings=q_emb)
+        log.info("[INIT] Qdrant ready.")
+    else:
+        q_vectorstore = None
+except Exception as e:
+    log.error(f"[QDRANT INIT ERROR] {str(e)}")
+    q_vectorstore = None
 
 
-# ================================
-# QDRANT TOOL
-# ================================
-class QdrantWrapper:
+@tool
+def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
+    """
+    Search personal knowledge stored in Qdrant.
+    """
+    log.info(f"[TOOL:qdrant_search_tool] Query={query}")
 
-    def __init__(self):
-        if not (QDRANT_URL and QDRANT_API_KEY):
-            self.vectorstore = None
-            return
+    if q_vectorstore is None:
+        return "Qdrant not configured."
 
-        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
-        embeddings = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
-        self.vectorstore = Qdrant(
-            client=client,
-            collection_name=QDRANT_COLLECTION,
-            embeddings=embeddings
+    try:
+        matches = q_vectorstore.similarity_search(query, k=top_k)
+        if not matches:
+            return "No matching knowledge found."
+
+        return "\n".join(
+            f"- {doc.page_content} (source={doc.metadata.get('source','unknown')})"
+            for doc in matches
         )
 
-    @tool
-    def qdrant_search_tool(self, query: str, top_k: int = QDRANT_TOP_K) -> str:
-        """
-        Retrieve personal knowledge using Qdrant similarity search.
-        """
-        if not self.vectorstore:
-            return "Qdrant not configured."
-
-        try:
-            results = self.vectorstore.similarity_search(query, k=top_k)
-            if not results:
-                return f"No matches for '{query}'."
-
-            out = []
-            for doc in results:
-                src = doc.metadata.get("source", "unknown")
-                out.append(f"- {doc.page_content} (source: {src})")
-            return "\n".join(out)
-        except Exception as e:
-            return f"Qdrant error: {str(e)}"
+    except Exception as e:
+        return f"Qdrant error: {str(e)}"
 
 
-qdrant_wrapper = QdrantWrapper()
-qdrant_tool_fn = qdrant_wrapper.qdrant_search_tool
-
-
-# ================================
-# AGENT NODE
-# ================================
+# ==================================================================
+# ROS2 AGENT NODE
+# ==================================================================
 class AgentNode(Node):
-
-    _shared_instance = None   # allows tools to publish to ROS topics
 
     def __init__(self):
         super().__init__("agent_node")
-        AgentNode._shared_instance = self
 
-        # ROS pubs/subs
-        self.sub_input = self.create_subscription(String, "user_input", self._on_user_input, 10)
+        global _shared_agent_node
+        _shared_agent_node = self
+
+        # ROS topics
+        self.sub_input    = self.create_subscription(String, "user_input", self._on_user_input, 10)
         self.pub_response = self.create_publisher(String, "agent_response", 10)
 
-        # Memory + checkpointer
+        # memory
         self.store = InMemoryStore()
         self.checkpointer = MemorySaver()
 
@@ -187,45 +163,39 @@ class AgentNode(Node):
         self.subagents = [
             {
                 "name": "research-subagent",
-                "description": "Web research (Tavily).",
-                "system_prompt": "Use tavily_tool to fetch information.",
-                "tools": [tavily_tool_fn, speak_tool_fn],
+                "description": "Web research using Tavily.",
+                "system_prompt": "Use tavily_tool for research.",
+                "tools": [tavily_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "memory-subagent",
-                "description": "Personal knowledge retrieval via Qdrant.",
-                "system_prompt": "Use qdrant_search_tool to retrieve Rakesh's knowledge.",
-                "tools": [qdrant_tool_fn, speak_tool_fn],
+                "description": "Qdrant knowledge lookup.",
+                "system_prompt": "Use qdrant_search_tool for memory queries.",
+                "tools": [qdrant_search_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "communication-subagent",
-                "description": "Handles speaking to the user.",
-                "system_prompt": (
-                    "For any user-facing message, call speak_tool(message). "
-                    "Assistant text alone will not be spoken."
-                ),
-                "tools": [speak_tool_fn],
+                "description": "Handles speaking.",
+                "system_prompt": "Always use speak_tool(text).",
+                "tools": [speak_tool],
                 "model": AGENT_MODEL,
             },
         ]
 
-        # Supervisor prompt
         self.system_prompt = SystemMessage(
             content=(
-                "You are the main humanoid robot brain.\n"
-                "For any user-facing text, call speak_tool(message).\n"
-                "Use research-subagent for web info.\n"
-                "Use memory-subagent for Qdrant knowledge.\n"
-                "Never assume plain assistant messages will be spoken — use speak_tool.\n"
+                "You are the robot's supervisor.\n"
+                "For ANY user-facing message, use speak_tool(message).\n"
+                "Use subagents when appropriate.\n"
             )
         )
 
-        # Create agent
+        # Create DeepAgent
         self.agent = create_deep_agent(
             model=AGENT_MODEL,
-            tools=[tavily_tool_fn, qdrant_tool_fn, speak_tool_fn],
+            tools=[speak_tool, tavily_tool, qdrant_search_tool],
             subagents=self.subagents,
             system_prompt=self.system_prompt.content,
             backend=lambda rt: StateBackend(rt),
@@ -233,54 +203,55 @@ class AgentNode(Node):
             checkpointer=self.checkpointer,
         )
 
-        self.get_logger().info("AgentNode with DeepAgents initialized.")
+        log.info("AgentNode initialized.")
 
-    # ============== handle user input ==============
+    # ---------------- user input ----------------
     def _on_user_input(self, msg: String):
         text = msg.data.strip()
         if not text:
             return
 
-        thread_id = "main_conversation"
-        config = {"configurable": {"thread_id": thread_id}}
+        log.info(f"\n===== USER SAID: {text} =====")
+
+        config = {"configurable": {"thread_id": "main_conversation"}}
 
         try:
-            result = self.agent.invoke({"messages": [{"role": "user", "content": text}]}, config=config)
-            result = self._auto_resume_interrupts(result, config)
+            result = self.agent.invoke(
+                {"messages": [{"role": "user", "content": text}]},
+                config=config
+            )
 
-            # Fallback publishing if GPT emits assistant messages without speak_tool
-            self._handle_fallback_messages(result)
+            # process
+            result = self._auto_resume_interrupts(result, config)
+            self._fallback_speak(result)
 
         except Exception as e:
-            err = String()
-            err.data = f"Error: {str(e)}"
-            self.pub_response.publish(err)
+            log.error(f"[AGENT ERROR] {str(e)}")
+            out = String()
+            out.data = f"Error: {str(e)}"
+            self.pub_response.publish(out)
 
-    # ============== auto-approve interrupts =========
+    # ---------------- interrupt handling ----------------
     def _auto_resume_interrupts(self, result, config):
         while "__interrupt__" in result:
-            interrupt = result["__interrupt__"][0].value
-            decisions = [{"type": "approve"} for _ in interrupt["action_requests"]]
-            result = self.agent.invoke(Command(resume={"decisions": decisions}), config=config)
+            intr = result["__interrupt__"][0].value
+            decisions = [{"type": "approve"} for _ in intr["action_requests"]]
+            result = self.agent.invoke(
+                Command(resume={"decisions": decisions}), config=config
+            )
         return result
 
-    # ============== fallback assistant → speak =======
-    def _handle_fallback_messages(self, result):
-        msgs = result.get("messages", [])
-        for m in msgs:
-            if hasattr(m, "content"):
-                text = (m.content or "").strip()
-                if text and not text.startswith("[spoken]"):
-                    # If the agent forgot to call speak_tool, we still speak it
-                    msg = String()
-                    msg.data = text
-                    self.pub_response.publish(msg)
-                    log.info(f"[Fallback Speak] {text}")
+    # ---------------- fallback if LLM forgets speak_tool ----
+    def _fallback_speak(self, result):
+        for m in result.get("messages", []):
+            content = getattr(m, "content", "")
+            if content and not content.startswith("[spoken]"):
+                msg = String()
+                msg.data = content
+                self.pub_response.publish(msg)
+                log.info(f"[FallbackSpeak] {content}")
 
 
-# ================================
-# ROS2 MAIN
-# ================================
 def main(args=None):
     rclpy.init(args=args)
     node = AgentNode()
