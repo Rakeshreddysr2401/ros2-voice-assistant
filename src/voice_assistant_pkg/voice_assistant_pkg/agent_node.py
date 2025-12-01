@@ -1,135 +1,293 @@
-# agent_node.py
+#!/usr/bin/env python3
+"""
+agent_node_main.py — Actual DeepAgents ROS2 Node
+
+Subagents:
+- research-subagent (Tavily)
+- memory-subagent  (Qdrant)
+- communication-subagent (speak_tool)
+
+The agent decides when to speak by calling speak_tool(message).
+This publishes to /agent_response → picked up by output_node (TTS).
+"""
+
+import os
+import logging
+from typing import Optional, Dict, Any, List
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
+# DeepAgents
+from deepagents import create_deep_agent
+from deepagents.backends import StateBackend
+from langgraph.store.memory import InMemoryStore
 from langgraph.checkpoint.memory import MemorySaver
-from .tools import get_tools
-from .states.states import AgentState
-from .agents.chatAgentNode import call_agent
-from .llm_config import llm
+from langgraph.types import Command
+
+# LangChain
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain.tools import tool
+
+# Tavily
+from tavily import TavilyClient
+
+# Qdrant
+from qdrant_client import QdrantClient
+from langchain_qdrant import Qdrant
+from langchain_openai import OpenAIEmbeddings
+
+# Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("agent_node")
 
 
-MAX_RETRIES = 2
+# ================================
+# ENV VARS
+# ================================
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "personal_knowledge_base")
+MODEL_NAME_EMBED = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+QDRANT_TOP_K = int(os.getenv("QDRANT_TOP_K", "3"))
+
+AGENT_MODEL = os.getenv("AGENT_MODEL", "openai:gpt-4o-mini")
 
 
-# ------------------ Agent Node ------------------
-class AgentNode(Node):
+# ================================
+# SPEAK TOOL
+# ================================
+class SpeakWrapper:
+    """
+    Tool to publish text to agent_response topic.
+    ROS2 publisher accessed through AgentNode._shared_instance
+    """
+
+    @tool
+    def speak_tool(self, message: str) -> str:
+        """
+        Publish text to /agent_response so TTS can speak it.
+        Returns confirmation to the LLM: "[spoken] text".
+        """
+        node = AgentNode._shared_instance
+        if node is None:
+            return "[speak_tool error: AgentNode not ready]"
+
+        msg = String()
+        msg.data = message
+        node.pub_response.publish(msg)
+
+        log.info(f"[Tool] speak_tool published: {message}")
+        return f"[spoken] {message}"
+
+
+speak_wrapper = SpeakWrapper()
+speak_tool_fn = speak_wrapper.speak_tool
+
+
+# ================================
+# TAVILY TOOL
+# ================================
+class TavilyWrapper:
+
     def __init__(self):
-        super().__init__('agent_node')
-        self.llm = llm
-        # ROS communication
-        self.input_sub = self.create_subscription(String, 'user_input', self.process_input, 10)
-        self.response_pub = self.create_publisher(String, 'agent_response', 10)
+        self.client = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
-        # Tools and graph setup
-        if self.llm:
-            self.tools = get_tools()
-            self.tool_node = ToolNode(self.tools)
-            self.graph = self.create_agent_graph()
-        else:
-            self.tools = []
-            self.tool_node = None
-            self.graph = None
-        self.get_logger().info(f"🤖 AgentNode ready with {len(self.tools)} tools")
+    @tool
+    def tavily_tool(self, query: str, max_results: int = 5, topic: str = "general") -> str:
+        """
+        Perform Tavily web research.
+        """
+        if not self.client:
+            return "Tavily not configured."
 
-    def create_agent_graph(self):
-
-        def chat_agent_transition(state: AgentState):
-            """Determine next step after chatAgent."""
-            messages = state.get("messages", [])
-
-            if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
-                return "tools"
-            return END
-
-
-        """Create the LangGraph workflow"""
-        workflow = StateGraph(AgentState)
-        workflow.add_node("agent", call_agent)
-        workflow.add_node("tools", self.tool_node)
-        workflow.set_entry_point("agent")
-
-        workflow.add_conditional_edges(
-            "agent",
-            chat_agent_transition,
-            {
-                "tools": "tools",
-                END: END
-            }
-        )
-        workflow.add_edge("tools", "agent")
-
-        return workflow.compile(checkpointer=MemorySaver())
-
-    def process_input(self, msg: String):
-        """Process incoming user input with improved error handling and logging"""
         try:
-            user_text = msg.data.strip()
-            if not user_text:
-                self.get_logger().warning("Received empty user input")
-                return
+            res = self.client.search(query=query, max_results=max_results, topic=topic)
+            out = []
+            for r in res.get("results", []):
+                out.append(
+                    f"- {r.get('title')} | {r.get('url')}\n  {r.get('content')[:200]}"
+                )
+            return "\n".join(out) if out else "No results."
+        except Exception as e:
+            return f"Tavily error: {str(e)}"
 
-            if not self.graph:
-                error_msg = String()
-                error_msg.data = "I'm not ready yet. Please check that the OpenAI API key is configured correctly."
-                self.response_pub.publish(error_msg)
-                return
 
-            self.get_logger().info(f"Processing user input: {user_text}")
+tavily_wrapper = TavilyWrapper()
+tavily_tool_fn = tavily_wrapper.tavily_tool
 
-            # Create initial state with user message
-            initial_state = {"messages": [HumanMessage(content=user_text)]}
 
-            # Use consistent thread ID for conversation memory
-            thread_config = {"configurable": {"thread_id": "main_conversation"}}
+# ================================
+# QDRANT TOOL
+# ================================
+class QdrantWrapper:
 
-            # Process with timeout
-            result = self.graph.invoke(initial_state, config=thread_config)
+    def __init__(self):
+        if not (QDRANT_URL and QDRANT_API_KEY):
+            self.vectorstore = None
+            return
 
-            # Extract and publish response
-            if result and "messages" in result and result["messages"]:
-                last_message = result["messages"][-1]
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        embeddings = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
+        self.vectorstore = Qdrant(
+            client=client,
+            collection_name=QDRANT_COLLECTION,
+            embeddings=embeddings
+        )
 
-                if hasattr(last_message, 'content'):
-                    response_text = last_message.content
-                else:
-                    response_text = str(last_message)
+    @tool
+    def qdrant_search_tool(self, query: str, top_k: int = QDRANT_TOP_K) -> str:
+        """
+        Retrieve personal knowledge using Qdrant similarity search.
+        """
+        if not self.vectorstore:
+            return "Qdrant not configured."
 
-                # Ensure response is not empty
-                if not response_text.strip():
-                    response_text = "I processed your request but didn't generate a response. Could you please rephrase your question?"
+        try:
+            results = self.vectorstore.similarity_search(query, k=top_k)
+            if not results:
+                return f"No matches for '{query}'."
 
-                response_msg = String()
-                response_msg.data = response_text
-                self.response_pub.publish(response_msg)
+            out = []
+            for doc in results:
+                src = doc.metadata.get("source", "unknown")
+                out.append(f"- {doc.page_content} (source: {src})")
+            return "\n".join(out)
+        except Exception as e:
+            return f"Qdrant error: {str(e)}"
 
-            # Log response (truncated for readability)
-            log_text = response_text[:150] + "..." if len(response_text) > 150 else response_text
-            self.get_logger().info(f"Response generated: {log_text}")
+
+qdrant_wrapper = QdrantWrapper()
+qdrant_tool_fn = qdrant_wrapper.qdrant_search_tool
+
+
+# ================================
+# AGENT NODE
+# ================================
+class AgentNode(Node):
+
+    _shared_instance = None   # allows tools to publish to ROS topics
+
+    def __init__(self):
+        super().__init__("agent_node")
+        AgentNode._shared_instance = self
+
+        # ROS pubs/subs
+        self.sub_input = self.create_subscription(String, "user_input", self._on_user_input, 10)
+        self.pub_response = self.create_publisher(String, "agent_response", 10)
+
+        # Memory + checkpointer
+        self.store = InMemoryStore()
+        self.checkpointer = MemorySaver()
+
+        # Subagents
+        self.subagents = [
+            {
+                "name": "research-subagent",
+                "description": "Web research (Tavily).",
+                "system_prompt": "Use tavily_tool to fetch information.",
+                "tools": [tavily_tool_fn, speak_tool_fn],
+                "model": AGENT_MODEL,
+            },
+            {
+                "name": "memory-subagent",
+                "description": "Personal knowledge retrieval via Qdrant.",
+                "system_prompt": "Use qdrant_search_tool to retrieve Rakesh's knowledge.",
+                "tools": [qdrant_tool_fn, speak_tool_fn],
+                "model": AGENT_MODEL,
+            },
+            {
+                "name": "communication-subagent",
+                "description": "Handles speaking to the user.",
+                "system_prompt": (
+                    "For any user-facing message, call speak_tool(message). "
+                    "Assistant text alone will not be spoken."
+                ),
+                "tools": [speak_tool_fn],
+                "model": AGENT_MODEL,
+            },
+        ]
+
+        # Supervisor prompt
+        self.system_prompt = SystemMessage(
+            content=(
+                "You are the main humanoid robot brain.\n"
+                "For any user-facing text, call speak_tool(message).\n"
+                "Use research-subagent for web info.\n"
+                "Use memory-subagent for Qdrant knowledge.\n"
+                "Never assume plain assistant messages will be spoken — use speak_tool.\n"
+            )
+        )
+
+        # Create agent
+        self.agent = create_deep_agent(
+            model=AGENT_MODEL,
+            tools=[tavily_tool_fn, qdrant_tool_fn, speak_tool_fn],
+            subagents=self.subagents,
+            system_prompt=self.system_prompt.content,
+            backend=lambda rt: StateBackend(rt),
+            store=self.store,
+            checkpointer=self.checkpointer,
+        )
+
+        self.get_logger().info("AgentNode with DeepAgents initialized.")
+
+    # ============== handle user input ==============
+    def _on_user_input(self, msg: String):
+        text = msg.data.strip()
+        if not text:
+            return
+
+        thread_id = "main_conversation"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        try:
+            result = self.agent.invoke({"messages": [{"role": "user", "content": text}]}, config=config)
+            result = self._auto_resume_interrupts(result, config)
+
+            # Fallback publishing if GPT emits assistant messages without speak_tool
+            self._handle_fallback_messages(result)
 
         except Exception as e:
-            self.get_logger().error(f"Error processing input: {str(e)}")
-            error_msg = String()
-            error_msg.data = f"I encountered an error: {str(e)}. Please try again or check if all services are running."
-            self.response_pub.publish(error_msg)
+            err = String()
+            err.data = f"Error: {str(e)}"
+            self.pub_response.publish(err)
+
+    # ============== auto-approve interrupts =========
+    def _auto_resume_interrupts(self, result, config):
+        while "__interrupt__" in result:
+            interrupt = result["__interrupt__"][0].value
+            decisions = [{"type": "approve"} for _ in interrupt["action_requests"]]
+            result = self.agent.invoke(Command(resume={"decisions": decisions}), config=config)
+        return result
+
+    # ============== fallback assistant → speak =======
+    def _handle_fallback_messages(self, result):
+        msgs = result.get("messages", [])
+        for m in msgs:
+            if hasattr(m, "content"):
+                text = (m.content or "").strip()
+                if text and not text.startswith("[spoken]"):
+                    # If the agent forgot to call speak_tool, we still speak it
+                    msg = String()
+                    msg.data = text
+                    self.pub_response.publish(msg)
+                    log.info(f"[Fallback Speak] {text}")
 
 
+# ================================
+# ROS2 MAIN
+# ================================
 def main(args=None):
     rclpy.init(args=args)
     node = AgentNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info("Shutting down AgentNode...")
+        pass
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
