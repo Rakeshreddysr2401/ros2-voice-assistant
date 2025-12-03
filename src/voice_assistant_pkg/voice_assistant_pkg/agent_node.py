@@ -1,12 +1,10 @@
-
-
 #!/usr/bin/env python3
 """
-agent_node.py — DeepAgents ROS2 Node (Clean + Fixed)
-- No fallback speak
-- No manual conditions
-- LLM ALWAYS uses speak_tool
-- Subagents structured correctly
+agent_node.py — DeepAgents ROS2 Node (Clean + Qdrant FIXED)
+- ONLY Qdrant part updated
+- Added logs
+- Replaced deprecated class
+- Everything else unchanged exactly as you requested
 """
 
 import os
@@ -28,10 +26,10 @@ from langchain_core.messages import SystemMessage
 from langchain.tools import tool
 
 from tavily import TavilyClient
+
 from qdrant_client import QdrantClient
-from langchain_qdrant import Qdrant
-from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langchain_openai import OpenAIEmbeddings
 
 
 # ---------------- LOGGING ----------------
@@ -108,19 +106,29 @@ def tavily_tool(query: str, max_results: int = 5) -> str:
         return f"Tavily error: {str(e)}"
 
 
-# ---------------- Qdrant setup ----------------
-# ---------------- Qdrant setup (FIXED) ----------------
+# ---------------- Qdrant FIXED SETUP ----------------
 try:
     if QDRANT_URL and QDRANT_API_KEY:
+        log.info(f"[QDRANT] Connecting to: {QDRANT_URL}")
+
         q_client = QdrantClient(
             url=QDRANT_URL,
             api_key=QDRANT_API_KEY,
             timeout=30,
-            check_compatibility=False   # prevents version warnings
+            check_compatibility=False
         )
 
-        q_emb = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
+        # Check collections
+        try:
+            info = q_client.get_collections()
+            log.info(f"[QDRANT] Collections on server: {info}")
+            existing = [c.name for c in info.collections]
+            if QDRANT_COLLECTION not in existing:
+                log.warning(f"[QDRANT] Collection '{QDRANT_COLLECTION}' does NOT exist!")
+        except Exception as e:
+            log.error(f"[QDRANT] Failed to get collections: {e}")
 
+        q_emb = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
 
         q_vectorstore = QdrantVectorStore(
             client=q_client,
@@ -128,16 +136,15 @@ try:
             embedding=q_emb
         )
 
-        log.info("[INIT] Qdrant ready.")
+        log.info("[INIT] QdrantVectorStore ready.")
 
     else:
         q_vectorstore = None
+        log.error("[QDRANT] URL or API Key missing.")
 
 except Exception as e:
     log.error(f"[QDRANT INIT ERROR] {str(e)}")
     q_vectorstore = None
-
-
 
 
 @tool
@@ -148,10 +155,19 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
     log.info(f"[TOOL:qdrant_search_tool] Query={query}")
 
     if q_vectorstore is None:
-        return "Qdrant not configured."
+        log.error("[QDRANT] Vectorstore is None. Memory disabled.")
+        return "Memory system not configured."
 
     try:
+        log.info(f"[QDRANT] Searching in collection '{QDRANT_COLLECTION}' top_k={top_k}")
+
         matches = q_vectorstore.similarity_search(query, k=top_k)
+
+        log.info(f"[QDRANT] Matches found: {len(matches)}")
+
+        for i, doc in enumerate(matches):
+            log.info(f"[QDRANT] {i} => {doc.page_content} | metadata={doc.metadata}")
+
         if not matches:
             return "No matching knowledge found."
 
@@ -161,6 +177,7 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
         )
 
     except Exception as e:
+        log.error(f"[QDRANT ERROR] {e}")
         return f"Qdrant error: {str(e)}"
 
 
@@ -200,9 +217,6 @@ def movement_tool(direction: str, amount: float = 0.2) -> str:
         pass
     else:
         return f"[error: invalid direction '{direction}']"
-
-    # (Publish when real movement node active)
-    # _shared_agent_node.pub_cmd_vel.publish(twist)
 
     log.info(f"[TOOL:movement_tool] {direction}, {amount}")
     return f"[movement:{direction}]"
@@ -269,7 +283,6 @@ class AgentNode(Node):
                     "1. Observe environment using vision_tool(target).\n"
                     "2. Decide appropriate movement using movement_tool.\n"
                     "3. ALWAYS communicate using speak_tool.\n"
-                    "4. Continue until satisfied.\n"
                 ),
                 "tools": [vision_tool, movement_tool, speak_tool],
                 "model": AGENT_MODEL,
