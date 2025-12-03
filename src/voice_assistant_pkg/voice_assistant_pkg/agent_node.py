@@ -140,6 +140,54 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
         return f"Qdrant error: {str(e)}"
 
 
+@tool
+def vision_tool(target: str) -> dict:
+    """
+    Returns rough position of an object.
+    Output example:
+        {"found": True, "x_offset": -0.3, "distance": 1.2}
+    """
+    # PLACEHOLDER: real version will query a vision node
+    mock = {
+        "chair": {"found": True, "x_offset": -0.2, "distance": 0.8},
+        "table": {"found": True, "x_offset": 0.1, "distance": 1.5},
+    }
+    return mock.get(target.lower(), {"found": False})
+
+
+@tool
+def movement_tool(direction: str, amount: float = 0.2) -> str:
+    """
+    Move the robot. Directions: forward, backward, left, right, stop.
+    Publishes Twist to /cmd_vel.
+    """
+    global _shared_agent_node
+    if _shared_agent_node is None:
+        return "[error: AgentNode not ready]"
+
+    from geometry_msgs.msg import Twist
+    twist = Twist()
+
+    if direction == "forward":
+        twist.linear.x = amount
+    elif direction == "backward":
+        twist.linear.x = -amount
+    elif direction == "left":
+        twist.angular.z = +amount
+    elif direction == "right":
+        twist.angular.z = -amount
+    elif direction == "stop":
+        twist.linear.x = 0.0
+        twist.angular.z = 0.0
+    else:
+        return f"[error: invalid direction '{direction}']"
+
+    # _shared_agent_node.pub_cmd_vel.publish(twist)
+    log.info(f"[TOOL:movement_tool] {direction} amt={amount}")
+    return f"[movement] {direction}"
+
+
+
 # ==================================================================
 # ROS2 AGENT NODE
 # ==================================================================
@@ -182,6 +230,33 @@ class AgentNode(Node):
                 "tools": [speak_tool],
                 "model": AGENT_MODEL,
             },
+            {
+                "name": "movement-subagent",
+                "description": (
+                    "Autonomous navigation subagent. "
+                    "Given a target object like `chair`, repeatedly use vision_tool to "
+                    "determine relative direction and distance, then call movement_tool "
+                    "to adjust left/right/forward. Continue until the object is centered "
+                    "and distance < 0.3m."
+                ),
+                "system_prompt": (
+                    "You control robot movement.\n"
+                    "Loop:\n"
+                    "1. Ask vision_tool(target) to get object offset/distance.\n"
+                    "2. If x_offset < -0.1 → movement_tool('left').\n"
+                    "3. If x_offset > +0.1 → movement_tool('right').\n"
+                    "4. If distance > 0.4 → movement_tool('forward').\n"
+                    "5. If distance < 0.3 → movement_tool('stop') and exit.\n"
+                    "6. Repeat.\n"
+                    "Always use speak_tool to announce progress to the user.\n"
+                ),
+                "tools": [vision_tool, movement_tool, speak_tool],
+                "model": AGENT_MODEL,
+            }
+
+            ##movement agent (used to move left right forward backward) - It Needs to have capability like if it receives coomand to go near chair
+            ##then it need to take decision to move forward or left or right based on chair position continuously until it reaches its goal it can use other subagents if needed
+            ## like for vision or any queries to take next decision
         ]
 
         self.system_prompt = SystemMessage(
@@ -189,6 +264,8 @@ class AgentNode(Node):
                 "You are the robot's supervisor.\n"
                 "For ANY user-facing message, use speak_tool(message).\n"
                 "Use subagents when appropriate.\n"
+                "If the user asks to move somewhere or approach an object, "
+                "delegate to movement-subagent.\n"
             )
         )
 
