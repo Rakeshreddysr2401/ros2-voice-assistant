@@ -1,11 +1,17 @@
+
+
 #!/usr/bin/env python3
 """
-agent_node.py — DeepAgents ROS2 Node (TOOLS FIXED: no class-method tools)
+agent_node.py — DeepAgents ROS2 Node (Clean + Fixed)
+- No fallback speak
+- No manual conditions
+- LLM ALWAYS uses speak_tool
+- Subagents structured correctly
 """
 
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 import rclpy
 from rclpy.node import Node
@@ -13,18 +19,19 @@ from std_msgs.msg import String
 
 from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
+
 from langgraph.store.memory import InMemoryStore
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain.tools import tool
 
 from tavily import TavilyClient
-
 from qdrant_client import QdrantClient
 from langchain_qdrant import Qdrant
 from langchain_openai import OpenAIEmbeddings
+from langchain_qdrant import QdrantVectorStore
 
 
 # ---------------- LOGGING ----------------
@@ -35,8 +42,8 @@ log = logging.getLogger("AgentNode")
 
 # ---------------- ENV ----------------
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-QDRANT_URL     = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+QDRANT_URL     = os.getenv("QDRANT_URL","https://14913e1e-77ca-4f9d-bf4b-26bf8d4f4230.eu-west-2-0.aws.cloud.qdrant.io")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY","eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.z57EvchkzSJuTD-b3Rx4za-mA20RNBHhZ9d-g9As8HY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "personal_knowledge_base")
 MODEL_NAME_EMBED = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 QDRANT_TOP_K = int(os.getenv("QDRANT_TOP_K", "3"))
@@ -44,7 +51,7 @@ AGENT_MODEL  = os.getenv("AGENT_MODEL", "openai:gpt-4o-mini")
 
 
 # ==================================================================
-#  FIXED TOOLS — PLAIN FUNCTIONS (NO METHODS!)
+#  FIXED TOOLS — PLAIN FUNCTIONS
 # ==================================================================
 
 _shared_agent_node = None   # global pointer used by speak tool
@@ -54,6 +61,7 @@ _shared_agent_node = None   # global pointer used by speak tool
 def speak_tool(message: str) -> str:
     """
     Publish text to /agent_response → OutputNode (TTS).
+    LLM must ALWAYS use this to talk to the user.
     """
     global _shared_agent_node
     if _shared_agent_node is None:
@@ -77,7 +85,7 @@ else:
 @tool
 def tavily_tool(query: str, max_results: int = 5) -> str:
     """
-    Perform a Tavily web search and return formatted results.
+    Tavily web search.
     """
     log.info(f"[TOOL:tavily_tool] Query={query}")
 
@@ -101,25 +109,41 @@ def tavily_tool(query: str, max_results: int = 5) -> str:
 
 
 # ---------------- Qdrant setup ----------------
+# ---------------- Qdrant setup (FIXED) ----------------
 try:
     if QDRANT_URL and QDRANT_API_KEY:
-        q_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
+        q_client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=30,
+            check_compatibility=False   # prevents version warnings
+        )
+
         q_emb = OpenAIEmbeddings(model=MODEL_NAME_EMBED)
-        q_vectorstore = Qdrant(client=q_client,
-                               collection_name=QDRANT_COLLECTION,
-                               embeddings=q_emb)
+
+
+        q_vectorstore = QdrantVectorStore(
+            client=q_client,
+            collection_name=QDRANT_COLLECTION,
+            embedding=q_emb
+        )
+
         log.info("[INIT] Qdrant ready.")
+
     else:
         q_vectorstore = None
+
 except Exception as e:
     log.error(f"[QDRANT INIT ERROR] {str(e)}")
     q_vectorstore = None
 
 
+
+
 @tool
 def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
     """
-    Search personal knowledge stored in Qdrant.
+    Search personal knowledge base in Qdrant.
     """
     log.info(f"[TOOL:qdrant_search_tool] Query={query}")
 
@@ -143,11 +167,8 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
 @tool
 def vision_tool(target: str) -> dict:
     """
-    Returns rough position of an object.
-    Output example:
-        {"found": True, "x_offset": -0.3, "distance": 1.2}
+    Mock vision. Replace with actual vision service later.
     """
-    # PLACEHOLDER: real version will query a vision node
     mock = {
         "chair": {"found": True, "x_offset": -0.2, "distance": 0.8},
         "table": {"found": True, "x_offset": 0.1, "distance": 1.5},
@@ -158,8 +179,7 @@ def vision_tool(target: str) -> dict:
 @tool
 def movement_tool(direction: str, amount: float = 0.2) -> str:
     """
-    Move the robot. Directions: forward, backward, left, right, stop.
-    Publishes Twist to /cmd_vel.
+    Movement control (Twist publisher).
     """
     global _shared_agent_node
     if _shared_agent_node is None:
@@ -177,15 +197,15 @@ def movement_tool(direction: str, amount: float = 0.2) -> str:
     elif direction == "right":
         twist.angular.z = -amount
     elif direction == "stop":
-        twist.linear.x = 0.0
-        twist.angular.z = 0.0
+        pass
     else:
         return f"[error: invalid direction '{direction}']"
 
+    # (Publish when real movement node active)
     # _shared_agent_node.pub_cmd_vel.publish(twist)
-    log.info(f"[TOOL:movement_tool] {direction} amt={amount}")
-    return f"[movement] {direction}"
 
+    log.info(f"[TOOL:movement_tool] {direction}, {amount}")
+    return f"[movement:{direction}]"
 
 
 # ==================================================================
@@ -212,60 +232,58 @@ class AgentNode(Node):
             {
                 "name": "research-subagent",
                 "description": "Web research using Tavily.",
-                "system_prompt": "Use tavily_tool for research.",
+                "system_prompt": (
+                    "You perform research using tavily_tool.\n"
+                    "When replying to the user, ALWAYS use speak_tool.\n"
+                ),
                 "tools": [tavily_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "memory-subagent",
-                "description": "Qdrant knowledge lookup.",
-                "system_prompt": "Use qdrant_search_tool for memory queries.",
+                "description": "Knowledge lookup from Qdrant.",
+                "system_prompt": (
+                    "Use qdrant_search_tool for memory queries.\n"
+                    "ALWAYS reply using speak_tool.\n"
+                ),
                 "tools": [qdrant_search_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "communication-subagent",
                 "description": "Handles speaking.",
-                "system_prompt": "Always use speak_tool(text).",
+                "system_prompt": "Always use speak_tool(text) to communicate.",
                 "tools": [speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "movement-subagent",
                 "description": (
-                    "Autonomous navigation subagent. "
-                    "Given a target object like `chair`, repeatedly use vision_tool to "
-                    "determine relative direction and distance, then call movement_tool "
-                    "to adjust left/right/forward. Continue until the object is centered "
-                    "and distance < 0.3m."
+                    "Navigation controller.\n"
+                    "Use vision_tool(target) to observe.\n"
+                    "Use movement_tool() to move.\n"
+                    "ANNOUNCE progress using speak_tool.\n"
                 ),
                 "system_prompt": (
-                    "You control robot movement.\n"
-                    "Loop:\n"
-                    "1. Ask vision_tool(target) to get object offset/distance.\n"
-                    "2. If x_offset < -0.1 → movement_tool('left').\n"
-                    "3. If x_offset > +0.1 → movement_tool('right').\n"
-                    "4. If distance > 0.4 → movement_tool('forward').\n"
-                    "5. If distance < 0.3 → movement_tool('stop') and exit.\n"
-                    "6. Repeat.\n"
-                    "Always use speak_tool to announce progress to the user.\n"
+                    "For movement tasks:\n"
+                    "1. Observe environment using vision_tool(target).\n"
+                    "2. Decide appropriate movement using movement_tool.\n"
+                    "3. ALWAYS communicate using speak_tool.\n"
+                    "4. Continue until satisfied.\n"
                 ),
                 "tools": [vision_tool, movement_tool, speak_tool],
                 "model": AGENT_MODEL,
             }
-
-            ##movement agent (used to move left right forward backward) - It Needs to have capability like if it receives coomand to go near chair
-            ##then it need to take decision to move forward or left or right based on chair position continuously until it reaches its goal it can use other subagents if needed
-            ## like for vision or any queries to take next decision
         ]
 
+        # Master system instructions
         self.system_prompt = SystemMessage(
             content=(
                 "You are the robot's supervisor.\n"
-                "For ANY user-facing message, use speak_tool(message).\n"
-                "Use subagents when appropriate.\n"
-                "If the user asks to move somewhere or approach an object, "
-                "delegate to movement-subagent.\n"
+                "IMPORTANT: The ONLY way you can communicate with the user is using speak_tool(message).\n"
+                "NEVER output plain text.\n"
+                "Delegate to appropriate subagents.\n"
+                "If user requests movement, delegate to movement-subagent.\n"
             )
         )
 
@@ -280,7 +298,7 @@ class AgentNode(Node):
             checkpointer=self.checkpointer,
         )
 
-        log.info("AgentNode initialized.")
+        log.info("AgentNode initialized successfully.")
 
     # ---------------- user input ----------------
     def _on_user_input(self, msg: String):
@@ -288,7 +306,7 @@ class AgentNode(Node):
         if not text:
             return
 
-        log.info(f"\n===== USER SAID: {text} =====")
+        log.info(f"\n==== USER SAID: {text} ====")
 
         config = {"configurable": {"thread_id": "main_conversation"}}
 
@@ -298,9 +316,7 @@ class AgentNode(Node):
                 config=config
             )
 
-            # process
-            result = self._auto_resume_interrupts(result, config)
-            self._fallback_speak(result)
+            self._auto_resume_interrupts(result, config)
 
         except Exception as e:
             log.error(f"[AGENT ERROR] {str(e)}")
@@ -316,17 +332,6 @@ class AgentNode(Node):
             result = self.agent.invoke(
                 Command(resume={"decisions": decisions}), config=config
             )
-        return result
-
-    # ---------------- fallback if LLM forgets speak_tool ----
-    def _fallback_speak(self, result):
-        for m in result.get("messages", []):
-            content = getattr(m, "content", "")
-            if content and not content.startswith("[spoken]"):
-                msg = String()
-                msg.data = content
-                self.pub_response.publish(msg)
-                log.info(f"[FallbackSpeak] {content}")
 
 
 def main(args=None):
