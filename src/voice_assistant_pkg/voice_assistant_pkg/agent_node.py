@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
-agent_node.py — DeepAgents ROS2 Node (Clean + Qdrant FIXED)
-- ONLY Qdrant part updated
-- Added logs
-- Replaced deprecated class
-- Everything else unchanged exactly as you requested
+agent_node.py — DeepAgents ROS2 Node (Clean + Qdrant + Vision Subagent)
 """
 
 import os
@@ -32,6 +28,15 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings
 
 
+# -------------------------------------------------------
+#  IMPORTING YOUR VISION TOOLS
+# -------------------------------------------------------
+from .tools.yolo_tool import describe_objects        # YOLO
+from .tools.blip_tool import describe_scene          # BLIP
+from .tools.qwen_tool import qwen_vision_tool        # Qwen Vision
+# -------------------------------------------------------
+
+
 # ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -40,8 +45,8 @@ log = logging.getLogger("AgentNode")
 
 # ---------------- ENV ----------------
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-QDRANT_URL     = os.getenv("QDRANT_URL","https://14913e1e-77ca-4f9d-bf4b-26bf8d4f4230.eu-west-2-0.aws.cloud.qdrant.io")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY","eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.z57EvchkzSJuTD-b3Rx4za-mA20RNBHhZ9d-g9As8HY")
+QDRANT_URL     = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "personal_knowledge_base")
 MODEL_NAME_EMBED = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
 QDRANT_TOP_K = int(os.getenv("QDRANT_TOP_K", "3"))
@@ -49,18 +54,15 @@ AGENT_MODEL  = os.getenv("AGENT_MODEL", "openai:gpt-4o-mini")
 
 
 # ==================================================================
-#  FIXED TOOLS — PLAIN FUNCTIONS
+#  FIXED TOOLS — PLAIN FUNCTIONS (ALL TOOLS MUST HAVE DOCSTRINGS)
 # ==================================================================
 
-_shared_agent_node = None   # global pointer used by speak tool
+_shared_agent_node = None
 
 
 @tool
 def speak_tool(message: str) -> str:
-    """
-    Publish text to /agent_response → OutputNode (TTS).
-    LLM must ALWAYS use this to talk to the user.
-    """
+    """Publish a spoken message on the 'agent_response' topic and return confirmation."""
     global _shared_agent_node
     if _shared_agent_node is None:
         return "[error: AgentNode not ready]"
@@ -82,9 +84,7 @@ else:
 
 @tool
 def tavily_tool(query: str, max_results: int = 5) -> str:
-    """
-    Tavily web search.
-    """
+    """Perform a web search with Tavily and return a short summary of results."""
     log.info(f"[TOOL:tavily_tool] Query={query}")
 
     if tavily_client is None:
@@ -96,12 +96,10 @@ def tavily_tool(query: str, max_results: int = 5) -> str:
         if not results:
             return "No Tavily results."
 
-        text = "\n".join(
+        return "\n".join(
             f"- {r.get('title')} | {r.get('url')}\n  {r.get('content')[:200]}"
             for r in results
         )
-        return text
-
     except Exception as e:
         return f"Tavily error: {str(e)}"
 
@@ -149,9 +147,7 @@ except Exception as e:
 
 @tool
 def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
-    """
-    Search personal knowledge base in Qdrant.
-    """
+    """Search the Qdrant vector database for relevant stored knowledge."""
     log.info(f"[TOOL:qdrant_search_tool] Query={query}")
 
     if q_vectorstore is None:
@@ -159,14 +155,8 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
         return "Memory system not configured."
 
     try:
-        log.info(f"[QDRANT] Searching in collection '{QDRANT_COLLECTION}' top_k={top_k}")
-
         matches = q_vectorstore.similarity_search(query, k=top_k)
-
         log.info(f"[QDRANT] Matches found: {len(matches)}")
-
-        for i, doc in enumerate(matches):
-            log.info(f"[QDRANT] {i} => {doc.page_content} | metadata={doc.metadata}")
 
         if not matches:
             return "No matching knowledge found."
@@ -175,17 +165,13 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
             f"- {doc.page_content} (source={doc.metadata.get('source','unknown')})"
             for doc in matches
         )
-
     except Exception as e:
-        log.error(f"[QDRANT ERROR] {e}")
         return f"Qdrant error: {str(e)}"
 
 
 @tool
 def vision_tool(target: str) -> dict:
-    """
-    Mock vision. Replace with actual vision service later.
-    """
+    """Simple mock vision tool — replace with real vision pipeline if needed."""
     mock = {
         "chair": {"found": True, "x_offset": -0.2, "distance": 0.8},
         "table": {"found": True, "x_offset": 0.1, "distance": 1.5},
@@ -195,9 +181,7 @@ def vision_tool(target: str) -> dict:
 
 @tool
 def movement_tool(direction: str, amount: float = 0.2) -> str:
-    """
-    Movement control (Twist publisher).
-    """
+    """Control robot movement; publishes Twist in real implementation (returns movement token)."""
     global _shared_agent_node
     if _shared_agent_node is None:
         return "[error: AgentNode not ready]"
@@ -218,6 +202,7 @@ def movement_tool(direction: str, amount: float = 0.2) -> str:
     else:
         return f"[error: invalid direction '{direction}']"
 
+    # In your real node you'd publish the twist to a cmd_vel topic here.
     log.info(f"[TOOL:movement_tool] {direction}, {amount}")
     return f"[movement:{direction}]"
 
@@ -241,14 +226,16 @@ class AgentNode(Node):
         self.store = InMemoryStore()
         self.checkpointer = MemorySaver()
 
-        # Subagents
+        # -------------------------------------------------------
+        # ALL SUBAGENTS
+        # -------------------------------------------------------
         self.subagents = [
             {
                 "name": "research-subagent",
                 "description": "Web research using Tavily.",
                 "system_prompt": (
-                    "You perform research using tavily_tool.\n"
-                    "When replying to the user, ALWAYS use speak_tool.\n"
+                    "Use tavily_tool for web research.\n"
+                    "ALWAYS respond using speak_tool.\n"
                 ),
                 "tools": [tavily_tool, speak_tool],
                 "model": AGENT_MODEL,
@@ -257,8 +244,8 @@ class AgentNode(Node):
                 "name": "memory-subagent",
                 "description": "Knowledge lookup from Qdrant.",
                 "system_prompt": (
-                    "Use qdrant_search_tool for memory queries.\n"
-                    "ALWAYS reply using speak_tool.\n"
+                    "Use qdrant_search_tool.\n"
+                    "ALWAYS respond using speak_tool.\n"
                 ),
                 "tools": [qdrant_search_tool, speak_tool],
                 "model": AGENT_MODEL,
@@ -266,44 +253,66 @@ class AgentNode(Node):
             {
                 "name": "communication-subagent",
                 "description": "Handles speaking.",
-                "system_prompt": "Always use speak_tool(text) to communicate.",
+                "system_prompt": "Always use speak_tool to talk to user.",
                 "tools": [speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "movement-subagent",
                 "description": (
-                    "Navigation controller.\n"
-                    "Use vision_tool(target) to observe.\n"
-                    "Use movement_tool() to move.\n"
-                    "ANNOUNCE progress using speak_tool.\n"
+                    "Navigation controller using vision_tool and movement_tool.\n"
                 ),
                 "system_prompt": (
-                    "For movement tasks:\n"
-                    "1. Observe environment using vision_tool(target).\n"
-                    "2. Decide appropriate movement using movement_tool.\n"
-                    "3. ALWAYS communicate using speak_tool.\n"
+                    "Use vision_tool to observe the target.\n"
+                    "Use movement_tool to move.\n"
+                    "Always reply with speak_tool.\n"
                 ),
                 "tools": [vision_tool, movement_tool, speak_tool],
                 "model": AGENT_MODEL,
-            }
+            },
+            {
+                "name": "vision-subagent",
+                "description": "Handles YOLO, BLIP, and Qwen Vision tasks.",
+                "system_prompt": (
+                    "Use describe_objects() for object detection (YOLO).\n"
+                    "Use describe_scene() for scene understanding (BLIP).\n"
+                    "Use qwen_vision_tool(query) for advanced visual reasoning.\n"
+                    "Always reply using speak_tool.\n"
+                ),
+                "tools": [
+                    describe_objects,   # YOLO
+                    describe_scene,     # BLIP
+                    qwen_vision_tool,   # Qwen Vision
+                    speak_tool
+                ],
+                "model": AGENT_MODEL,
+            },
         ]
 
-        # Master system instructions
+        # Master instructions
         self.system_prompt = SystemMessage(
             content=(
                 "You are the robot's supervisor.\n"
-                "IMPORTANT: The ONLY way you can communicate with the user is using speak_tool(message).\n"
-                "NEVER output plain text.\n"
-                "Delegate to appropriate subagents.\n"
-                "If user requests movement, delegate to movement-subagent.\n"
+                "Use speak_tool(message) for ALL responses.\n"
+                "Delegate tasks to the best subagent.\n"
             )
         )
 
-        # Create DeepAgent
+        # -------------------------------------------------------
+        # REGISTER ALL TOOLS INCLUDING NEW VISION TOOLS
+        # -------------------------------------------------------
+        all_tools = [
+            speak_tool,
+            tavily_tool,
+            qdrant_search_tool,
+            describe_objects,
+            describe_scene,
+            qwen_vision_tool,
+        ]
+
         self.agent = create_deep_agent(
             model=AGENT_MODEL,
-            tools=[speak_tool, tavily_tool, qdrant_search_tool],
+            tools=all_tools,
             subagents=self.subagents,
             system_prompt=self.system_prompt.content,
             backend=lambda rt: StateBackend(rt),
@@ -313,7 +322,6 @@ class AgentNode(Node):
 
         log.info("AgentNode initialized successfully.")
 
-    # ---------------- user input ----------------
     def _on_user_input(self, msg: String):
         text = msg.data.strip()
         if not text:
@@ -337,7 +345,6 @@ class AgentNode(Node):
             out.data = f"Error: {str(e)}"
             self.pub_response.publish(out)
 
-    # ---------------- interrupt handling ----------------
     def _auto_resume_interrupts(self, result, config):
         while "__interrupt__" in result:
             intr = result["__interrupt__"][0].value
