@@ -93,8 +93,8 @@ def move_robo(direction: str, value: Optional[float] = None) -> str:
     node = _ensure_node()
 
     # Speed constants — tune if needed
-    forward_speed_cm_s = 28.0
-    turn_speed_deg_s = 190.0
+    forward_speed_cm_s = 66.0
+    turn_speed_deg_s = 185.0
     duration = 0.0
 
     # -------------------

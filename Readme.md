@@ -36,6 +36,9 @@ source ~/ros2_ws/install/setup.bash
 ros2 run voice_assistant_pkg servo_publisher
 
 
+ ros2 topic pub /movement_cmd std_msgs/String "{data: 'S'}"
+
+
 
 
 ┌─────────────┐
