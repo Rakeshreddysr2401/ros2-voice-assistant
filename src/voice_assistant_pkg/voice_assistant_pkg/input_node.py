@@ -27,7 +27,7 @@ class InputNode(Node):
         self.listening_enabled = True
 
         # Mode selection: "voice" or "text"
-        self.mode = os.getenv("INPUT_MODEZ", "text").lower()
+        self.mode = os.getenv("INPUT_MODEZ", "voice").lower()
 
         if self.mode == "text":
             self.get_logger().info("🖊️ InputNode running in TEXT mode")
