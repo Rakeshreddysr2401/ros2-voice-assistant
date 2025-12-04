@@ -36,6 +36,8 @@ from .tools.blip_tool import describe_scene          # BLIP
 from .tools.qwen_tool import qwen_vision_tool        # Qwen Vision
 # -------------------------------------------------------
 
+from .tools.robo_control_node import servo_tool, move_robo  # Robot movement tools
+
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO,
@@ -169,42 +171,8 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
         return f"Qdrant error: {str(e)}"
 
 
-@tool
-def vision_tool(target: str) -> dict:
-    """Simple mock vision tool — replace with real vision pipeline if needed."""
-    mock = {
-        "chair": {"found": True, "x_offset": -0.2, "distance": 0.8},
-        "table": {"found": True, "x_offset": 0.1, "distance": 1.5},
-    }
-    return mock.get(target.lower(), {"found": False})
 
 
-@tool
-def movement_tool(direction: str, amount: float = 0.2) -> str:
-    """Control robot movement; publishes Twist in real implementation (returns movement token)."""
-    global _shared_agent_node
-    if _shared_agent_node is None:
-        return "[error: AgentNode not ready]"
-
-    from geometry_msgs.msg import Twist
-    twist = Twist()
-
-    if direction == "forward":
-        twist.linear.x = amount
-    elif direction == "backward":
-        twist.linear.x = -amount
-    elif direction == "left":
-        twist.angular.z = +amount
-    elif direction == "right":
-        twist.angular.z = -amount
-    elif direction == "stop":
-        pass
-    else:
-        return f"[error: invalid direction '{direction}']"
-
-    # In your real node you'd publish the twist to a cmd_vel topic here.
-    log.info(f"[TOOL:movement_tool] {direction}, {amount}")
-    return f"[movement:{direction}]"
 
 
 # ==================================================================
@@ -242,7 +210,7 @@ class AgentNode(Node):
             },
             {
                 "name": "memory-subagent",
-                "description": "Knowledge lookup from Qdrant.",
+                "description": "Personal Knowledge lookup from Qdrant.",
                 "system_prompt": (
                     "Use qdrant_search_tool.\n"
                     "ALWAYS respond using speak_tool.\n"
@@ -260,16 +228,18 @@ class AgentNode(Node):
             {
                 "name": "movement-subagent",
                 "description": (
-                    "Navigation controller using vision_tool and movement_tool.\n"
+                    "Navigation + robot movement + servo control.\n"
                 ),
                 "system_prompt": (
-                    "Use vision_tool to observe the target.\n"
-                    "Use movement_tool to move.\n"
-                    "Always reply with speak_tool.\n"
+                    "Use move_robo(F/B/L/R/S, value) for movement.\n"
+                    "Use servo_tool(angle) for servo control.\n"
+                    "Use vision subagent  if needed or YOLO if you know what you are looking.\n"
+                    "Respond using speak_tool ALWAYS.\n"
                 ),
-                "tools": [vision_tool, movement_tool, speak_tool],
+                "tools": [describe_objects, move_robo, servo_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
+
             {
                 "name": "vision-subagent",
                 "description": "Handles YOLO, BLIP, and Qwen Vision tasks.",
@@ -301,6 +271,7 @@ class AgentNode(Node):
         # -------------------------------------------------------
         # REGISTER ALL TOOLS INCLUDING NEW VISION TOOLS
         # -------------------------------------------------------
+
         all_tools = [
             speak_tool,
             tavily_tool,
@@ -308,6 +279,8 @@ class AgentNode(Node):
             describe_objects,
             describe_scene,
             qwen_vision_tool,
+            servo_tool,
+            move_robo,
         ]
 
         self.agent = create_deep_agent(
