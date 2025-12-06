@@ -1,3 +1,4 @@
+#voice_assistant.tools.qdrant_tool.py
 import os
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import Qdrant

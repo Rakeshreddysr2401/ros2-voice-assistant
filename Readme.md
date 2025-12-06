@@ -98,3 +98,9 @@ ros2 run voice_assistant_pkg servo_publisher
         │  LEFT    │        │  RIGHT   │
         │  SERVO   │        │  SERVO   │
         └──────────┘        └──────────┘
+
+
+To use QWEN:
+
+ros2 service call /qwen_vision_describe custom_interfaces/srv/QwenVision "{query: 'what do you see?', use_latest: true}"
+ros2 service call /qwen_vision_describe custom_interfaces/srv/QwenVision "{query: 'what do you see?', use_latest: true}"

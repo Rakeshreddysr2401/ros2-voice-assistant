@@ -1,0 +1,213 @@
+#include <WiFi.h>
+#include <ESP32Servo.h>
+#include <micro_ros_arduino.h>
+#include <rcl/rcl.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+
+#include <std_msgs/msg/string.h>
+#include <std_msgs/msg/u_int16.h>
+
+// -------- MOTOR PINS ----------
+const int IN1 = 26;
+const int IN2 = 25;
+const int IN3 = 33;
+const int IN4 = 32;
+
+const int ENA = 14;  // PWM LEFT
+const int ENB = 27;  // PWM RIGHT
+
+// PWM CONFIG
+int pwmChannelA = 0;
+int pwmChannelB = 1;
+int pwmFreq = 1000;
+int pwmResolution = 8;   // 0-255
+int motor_speed = 255;   // default 100%
+
+// -------- SERVO PIN ----------
+const int SERVO_PIN = 18;
+Servo servo;
+
+// -------- WIFI + AGENT ----------
+char WIFI_SSID[] = "Airtel_sing_5286";
+char WIFI_PASS[] = "Air@50637";
+char AGENT_IP[]  = "192.168.1.18";
+uint16_t AGENT_PORT = 8888;
+
+// -------- ROS HANDLES ----------
+rcl_subscription_t movement_sub;
+rcl_subscription_t speed_sub;
+rcl_subscription_t servo_sub;
+
+std_msgs__msg__String move_msg;
+std_msgs__msg__UInt16 speed_msg;
+std_msgs__msg__UInt16 servo_msg;
+
+rcl_allocator_t allocator;
+rclc_support_t support;
+rcl_node_t node;
+rclc_executor_t executor;
+
+// ========= MOTOR ACTIONS =========
+void applySpeed() {
+  ledcWrite(pwmChannelA, motor_speed);
+  ledcWrite(pwmChannelB, motor_speed);
+}
+
+void stopCar() {
+  Serial.println("[ACTION] STOP MOTOR");
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+}
+
+void forwardCar() {
+  Serial.print("[ACTION] FORWARD at PWM: "); Serial.println(motor_speed);
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+}
+
+void backwardCar() {
+  Serial.print("[ACTION] BACKWARD at PWM: "); Serial.println(motor_speed);
+  digitalWrite(IN1, LOW);  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH);
+}
+
+void leftCar() {
+  Serial.print("[ACTION] LEFT at PWM: "); Serial.println(motor_speed);
+  digitalWrite(IN1, LOW);  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+}
+
+void rightCar() {
+  Serial.print("[ACTION] RIGHT at PWM: "); Serial.println(motor_speed);
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH);
+}
+
+// ========= CALLBACKS =========
+
+// Movement callback
+void movement_callback(const void *msgin)
+{
+  Serial.println("[CALLBACK] movement_callback triggered");
+
+  const std_msgs__msg__String * msg =
+      (const std_msgs__msg__String *)msgin;
+
+  String cmd = String(msg->data.data);
+
+  Serial.print("[ROS] /movement_cmd received → ");
+  Serial.println(cmd);
+
+  applySpeed();
+
+  if (cmd == "F") forwardCar();
+  else if (cmd == "B") backwardCar();
+  else if (cmd == "L") leftCar();
+  else if (cmd == "R") rightCar();
+  else stopCar();
+}
+
+// Speed callback
+void speed_callback(const void *msgin)
+{
+  const std_msgs__msg__UInt16 * msg =
+      (const std_msgs__msg__UInt16 *)msgin;
+
+  int percent = msg->data;
+  if (percent > 100) percent = 100;
+
+  motor_speed = map(percent, 0, 100, 0, 255);
+
+  Serial.print("[ROS] /movement_speed received → ");
+  Serial.print(percent);
+  Serial.print("%  PWM=");
+  Serial.println(motor_speed);
+
+  applySpeed();
+}
+
+// Servo callback
+void servo_callback(const void *msgin)
+{
+  const std_msgs__msg__UInt16 * msg =
+      (const std_msgs__msg__UInt16 *)msgin;
+  uint16_t angle = msg->data;
+
+  Serial.print("[ROS] /servo_angle received → ");
+  Serial.println(angle);
+
+  if (angle > 180) angle = 180;
+
+  servo.write(angle);
+}
+
+// ========= SETUP =========
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // Motor Setup
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+
+  // PWM Setup
+  ledcSetup(pwmChannelA, pwmFreq, pwmResolution);
+  ledcSetup(pwmChannelB, pwmFreq, pwmResolution);
+  ledcAttachPin(ENA, pwmChannelA);
+  ledcAttachPin(ENB, pwmChannelB);
+
+  applySpeed();
+
+  servo.attach(SERVO_PIN);
+  servo.write(90);
+
+  stopCar();
+
+  set_microros_wifi_transports(WIFI_SSID, WIFI_PASS, AGENT_IP, AGENT_PORT);
+
+  allocator = rcl_get_default_allocator();
+  rclc_support_init(&support, 0, NULL, &allocator);
+
+  rclc_node_init_default(&node, "esp32_robot_node", "", &support);
+
+  // Movement subscriber
+  rclc_subscription_init_default(
+    &movement_sub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+    "movement_cmd"
+  );
+
+  // FIX: Allocate memory for String
+  static char move_buffer[50];
+  move_msg.data.data = move_buffer;
+  move_msg.data.size = 0;
+  move_msg.data.capacity = sizeof(move_buffer);
+
+  // Speed subscriber
+  rclc_subscription_init_default(
+    &speed_sub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt16),
+    "movement_speed"
+  );
+
+  // Servo subscriber
+  rclc_subscription_init_default(
+    &servo_sub, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt16),
+    "servo_angle"
+  );
+
+  rclc_executor_init(&executor, &support.context, 3, &allocator);
+  rclc_executor_add_subscription(&executor, &movement_sub, &move_msg, movement_callback, ON_NEW_DATA);
+  rclc_executor_add_subscription(&executor, &speed_sub, &speed_msg, speed_callback, ON_NEW_DATA);
+  rclc_executor_add_subscription(&executor, &servo_sub, &servo_msg, servo_callback, ON_NEW_DATA);
+
+  Serial.println("[READY] ESP32 READY (speed + movement + servo)");
+}
+
+// ========= LOOP =========
+void loop() {
+  rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
+  delay(5);
+}
