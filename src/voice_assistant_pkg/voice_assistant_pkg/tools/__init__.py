@@ -4,6 +4,12 @@ from .yolo_tool import describe_objects
 from .qwen_tool import qwen_vision_tool
 from .lt import set_traffic_light
 from .servo_tool import move_servos
+from .spatial_tool import spatial_navigator_tool
+from .robo_control_node import move_robo
+from .memory_tool import add_memory_tool, search_memory_tool
+from .moondream_tool import fast_vision_tool
+from .tracking_tool import track_object
+from .semantic_map_tool import pin_object_on_map, query_semantic_map
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import Tool, StructuredTool
 
@@ -31,7 +37,15 @@ def get_tools():
         wrap_tool(qdrant_search_tool),
         wrap_tool(tavily_tool),
         wrap_tool(set_traffic_light),
-        wrap_tool(move_servos)
+        wrap_tool(move_servos),
+        wrap_tool(spatial_navigator_tool),
+        wrap_tool(move_robo),
+        wrap_tool(add_memory_tool),
+        wrap_tool(search_memory_tool),
+        wrap_tool(fast_vision_tool),
+        wrap_tool(track_object),
+        wrap_tool(pin_object_on_map),
+        wrap_tool(query_semantic_map)
     ]
 
 
@@ -60,9 +74,24 @@ def build_system_message(tools):
         "🎯 TOOL USAGE GUIDELINES:\n\n"
 
         "VISION & PERCEPTION:\n"
-        "- For 'what do you see', 'describe the scene', or general visual questions → use qwen_vision_tool\n"
+        "- For high-detail descriptions, reading text, or complex scene analysis → use qwen_vision_tool (Slower)\n"
+        "- For quick checks, tracking objects, or real-time navigation ('is the bottle still there?') → use fast_vision_tool (Fast)\n"
         "- For 'where is the [object]', 'detect [objects]', or location queries → use describe_objects\n"
         "- Always describe what you see naturally before taking actions\n\n"
+
+        "LONG-TERM MEMORY (Mem0):\n"
+        "- Use add_memory_tool to save important facts, user preferences, or object locations (e.g., 'The bottle is on the dock')\n"
+        "- Use search_memory_tool to recall information you might have learned in the past\n"
+        "- Prefer Mem0 tools for facts that should persist across conversations\n\n"
+
+        "MOVEMENT & TRACKING:\n"
+        "- For continuous, smooth tracking/following of an object (e.g., 'go near the bottle') → use track_object(target_label='bottle', action='START')\n"
+        "- For simple, direct movements ('move forward 1m', 'turn left 90') → use move_robo\n"
+        "- Always 'STOP' tracking if the goal is reached or a new task is given.\n\n"
+
+        "SEMANTIC MAPPING:\n"
+        "- Use pin_object_on_map(label) when you arrive at or identify an object's position.\n"
+        "- Use query_semantic_map() to recall where objects are located relative to you, especially if they are currently out of sight.\n\n"
 
         "ARM MOVEMENT (move_servos):\n"
         "- 'raise/lift left hand' → left=180\n"

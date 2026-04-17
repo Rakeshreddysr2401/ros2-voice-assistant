@@ -3,7 +3,7 @@ import os
 import queue
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 import sounddevice as sd
 import numpy as np
 import webrtcvad
@@ -22,6 +22,12 @@ class InputNode(Node):
 
         # Subscribe to output status
         self.create_subscription(String, 'output_status', self.output_status_callback, 10)
+
+        # Wake word state
+        self.create_subscription(Bool, 'wake_word_detected', self.wake_callback, 10)
+        self.is_awoken = False
+        self.last_wake_time = 0
+        self.wake_timeout = 10.0 # Listen for 10s after wake word
 
         # Listening state control
         self.listening_enabled = True
@@ -42,6 +48,13 @@ class InputNode(Node):
         if msg.data == "speaking_done":
             self.listening_enabled = True
             self.get_logger().info("🎤 Listening resumed after speech")
+
+    def wake_callback(self, msg):
+        """Triggered when Vosk hears the wake word"""
+        if msg.data:
+            self.is_awoken = True
+            self.last_wake_time = time.time()
+            self.get_logger().info("✨ Node awoken by wake word!")
 
     # ---------------- Voice Pipeline ----------------
     def _init_voice_pipeline(self):
@@ -138,6 +151,23 @@ class InputNode(Node):
                     pass
             return
 
+        # Wake word logic
+        current_time = time.time()
+        if not self.is_awoken:
+            # While not awoken, just clear the queue so we don't have old audio
+            try:
+                while True:
+                    self.q.get_nowait()
+            except queue.Empty:
+                pass
+            return
+        
+        # Check for wake timeout
+        if current_time - self.last_wake_time > self.wake_timeout and not self.is_recording:
+            self.is_awoken = False
+            self.get_logger().info("💤 Going back to sleep...")
+            return
+
         audio_chunks = []
         try:
             # Process more chunks at once for smoother flow
@@ -173,6 +203,7 @@ class InputNode(Node):
                     self.transcription_queue.put(self.speech_frames.copy())
                 self.speech_frames = []
                 self.is_recording = False
+                self.is_awoken = False # Go back to sleep after one command
 
     def _transcription_worker(self):
         while True:

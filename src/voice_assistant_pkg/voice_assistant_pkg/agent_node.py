@@ -34,6 +34,11 @@ from langchain_openai import OpenAIEmbeddings
 from .tools.yolo_tool import describe_objects        # YOLO
 from .tools.blip_tool import describe_scene          # BLIP
 from .tools.qwen_tool import qwen_vision_tool        # Qwen Vision
+from .tools.spatial_tool import spatial_navigator_tool # Spatial Reasoning
+from .tools.memory_tool import add_memory_tool, search_memory_tool # Mem0
+from .tools.moondream_tool import fast_vision_tool # Fast VLM
+from .tools.tracking_tool import track_object # Visual Servoing
+from .tools.semantic_map_tool import pin_object_on_map, query_semantic_map # Mapping
 # -------------------------------------------------------
 
 from .tools.robo_control_node import servo_tool, move_robo  # Robot movement tools
@@ -175,6 +180,18 @@ def qdrant_search_tool(query: str, top_k: int = QDRANT_TOP_K) -> str:
 
 
 
+@tool
+def status_tool(message: str) -> str:
+    """Update the robot's internal status/thinking message for the dashboard."""
+    global _shared_agent_node
+    if _shared_agent_node:
+        msg = String()
+        msg.data = message
+        _shared_agent_node.pub_status.publish(msg)
+    log.info(f"[STATUS] {message}")
+    return "Status updated."
+
+
 # ==================================================================
 # ROS2 AGENT NODE
 # ==================================================================
@@ -189,6 +206,7 @@ class AgentNode(Node):
         # ROS topics
         self.sub_input    = self.create_subscription(String, "user_input", self._on_user_input, 10)
         self.pub_response = self.create_publisher(String, "agent_response", 10)
+        self.pub_status   = self.create_publisher(String, "agent_status", 10)
 
         # memory
         self.store = InMemoryStore()
@@ -203,56 +221,72 @@ class AgentNode(Node):
                 "description": "Web research using Tavily.",
                 "system_prompt": (
                     "Use tavily_tool for web research.\n"
+                    "Use status_tool to show you are searching the web.\n"
                     "ALWAYS respond using speak_tool.\n"
                 ),
-                "tools": [tavily_tool, speak_tool],
+                "tools": [tavily_tool, status_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "memory-subagent",
-                "description": "Personal Knowledge lookup from Qdrant.",
+                "description": "Handles Qdrant and Mem0 knowledge lookup and storage.",
                 "system_prompt": (
-                    "Use qdrant_search_tool.\n"
+                    "Use search_memory_tool for structured long-term facts.\n"
+                    "Use add_memory_tool to save new info permanently.\n"
+                    "Use qdrant_search_tool for raw knowledge base lookup.\n"
+                    "Use status_tool to show you are looking into memories.\n"
                     "ALWAYS respond using speak_tool.\n"
                 ),
-                "tools": [qdrant_search_tool, speak_tool],
+                "tools": [search_memory_tool, add_memory_tool, qdrant_search_tool, status_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "communication-subagent",
-                "description": "Handles speaking.",
-                "system_prompt": "Always use speak_tool to talk to user.",
-                "tools": [speak_tool],
+                "description": "Handles speaking and explaining actions.",
+                "system_prompt": (
+                    "Always use speak_tool to talk to user.\n"
+                    "Use status_tool to show you are composing a reply.\n"
+                ),
+                "tools": [speak_tool, status_tool],
                 "model": AGENT_MODEL,
             },
             {
                 "name": "movement-subagent",
                 "description": (
-                    "Navigation + robot movement + servo control.\n"
+                    "Navigation + robot movement + servo control + spatial reasoning + mapping.\n"
                 ),
                 "system_prompt": (
-                    "Use move_robo(F/B/L/R/S, value) for movement.\n"
-                    "Use servo_tool(angle) for servo control.\n"
-                    "Use vision subagent  if needed or YOLO if you know what you are looking.\n"
-                    "Respond using speak_tool ALWAYS.\n"
+                    "To 'go near' an object smoothly:\n"
+                    "1. Use status_tool('Engaging visual tracking...')\n"
+                    "2. Use track_object(target_label=target, action='START').\n"
+                    "3. Wait for arrival status.\n"
+                    "4. Use pin_object_on_map(target) to store its location once reached.\n"
+                    "To find an object out of sight, use query_semantic_map().\n"
+                    "For simple movements (forward/turn), use move_robo.\n"
                 ),
-                "tools": [describe_objects, move_robo, servo_tool, speak_tool],
+                "tools": [describe_objects, spatial_navigator_tool, track_object, move_robo, servo_tool, pin_object_on_map, query_semantic_map, status_tool, speak_tool],
                 "model": AGENT_MODEL,
             },
 
             {
                 "name": "vision-subagent",
-                "description": "Handles YOLO, BLIP, and Qwen Vision tasks.",
+                "description": "Handles YOLO, BLIP, Qwen and Moondream Vision tasks.",
                 "system_prompt": (
+                    "Use status_tool to show you are analyzing visual data.\n"
+                    "Use fast_vision_tool for navigation, object tracking, and quick checks (SAVES TIME).\n"
+                    "Use qwen_vision_tool for detailed descriptions or reading text.\n"
                     "Use describe_objects() for object detection (YOLO).\n"
                     "Use describe_scene() for scene understanding (BLIP).\n"
-                    "Use qwen_vision_tool(query) for advanced visual reasoning.\n"
+                    "Use add_memory_tool to remember the location of objects you see.\n"
                     "Always reply using speak_tool.\n"
                 ),
                 "tools": [
-                    describe_objects,   # YOLO
-                    describe_scene,     # BLIP
-                    qwen_vision_tool,   # Qwen Vision
+                    describe_objects,
+                    describe_scene,
+                    qwen_vision_tool,
+                    fast_vision_tool,
+                    add_memory_tool,
+                    status_tool,
                     speak_tool
                 ],
                 "model": AGENT_MODEL,
@@ -262,9 +296,12 @@ class AgentNode(Node):
         # Master instructions
         self.system_prompt = SystemMessage(
             content=(
-                "You are the robot's supervisor.\n"
+                "You are the robot's supervisor. You have a physical body and visual memory.\n"
                 "Use speak_tool(message) for ALL responses.\n"
-                "Delegate tasks to the best subagent.\n"
+                "Use status_tool(message) to broadcast your current task or thought.\n"
+                "Delegate movement tasks to movement-subagent.\n"
+                "Always explain your 'thinking' to the user via status_tool.\n"
+                "After seeing an object, consider asking the memory-subagent to store its location if it seems important.\n"
             )
         )
 
@@ -274,13 +311,21 @@ class AgentNode(Node):
 
         all_tools = [
             speak_tool,
+            status_tool,
             tavily_tool,
             qdrant_search_tool,
             describe_objects,
             describe_scene,
             qwen_vision_tool,
+            fast_vision_tool,
+            spatial_navigator_tool,
             servo_tool,
             move_robo,
+            track_object,
+            pin_object_on_map,
+            query_semantic_map,
+            add_memory_tool,
+            search_memory_tool,
         ]
 
         self.agent = create_deep_agent(

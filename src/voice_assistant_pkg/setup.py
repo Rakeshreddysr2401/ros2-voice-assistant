@@ -38,7 +38,11 @@ setup(
 'bluelight_controller = voice_assistant_pkg.bluelight_controller:main',
 'yolo_server = voice_assistant_pkg.yolo_server:main',
 'llava_server = voice_assistant_pkg.llava_server:main',
-
+'moondream_server = voice_assistant_pkg.moondream_server:main',
+'dashboard_node = voice_assistant_pkg.dashboard_node:main',
+'visual_servoing_node = voice_assistant_pkg.visual_servoing_node:main',
+'semantic_map_node = voice_assistant_pkg.semantic_map_node:main',
+'wakeword_node = voice_assistant_pkg.wakeword_node:main',
         ],
     },
 )
